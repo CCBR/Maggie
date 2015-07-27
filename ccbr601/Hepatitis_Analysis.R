@@ -42,7 +42,8 @@ e <- exprs(eset)
 te <- t(e)
 tedf = as.data.frame(te)
 tedf=cbind(pData(eset),tedf)
-tedf2 <- ddply(tedf, c("Patient.ID", "Treatment","Baseline.Fibrosis.Group","Timing"), 
+tedf2 <- ddply(tedf, c("Patient.ID", "Treatment","Baseline.Fibrosis.Group","Timing",
+                       "Failed","HCV.RNA.at.F.U.Bx.Value"), 
             function(x) colMeans(x[,24:ncol(x)]))
 unique(tedf2[1:4])
 
@@ -234,7 +235,8 @@ fc_pvalmat[n,4]=ttest_cirr_noncirr_6hr$p.value
 #### Group together Cirrhosis vs Non-Cirrhosis and reanalyze ############
 
 
-tedf2 <- ddply(tedf, c("Patient.ID", "Treatment","Baseline.Fibrosis.Group","Timing","Failed"), 
+tedf2 <- ddply(tedf, c("Patient.ID", "Treatment","Baseline.Fibrosis.Group","Timing",
+                       "Failed"), 
                function(x) colMeans(x[,24:ncol(x)]))
 
 tedf2$Cirrhosis.Group[tedf2$Baseline.Fibrosis.Group=="F_0_2"]="Non.Cirr"
@@ -1208,7 +1210,123 @@ write.table(finalres5,file="Gt1a_all_TT.txt",row.names=FALSE,sep="\t",quote=FALS
 write.table(Pre_IFN_Results,file="Gt1a_pre_TT_Results.txt",row.names=FALSE,sep="\t",quote=FALSE)
 write.table(Post_IFN_Results,file="Gt1a_post_TT_Results.txt",row.names=FALSE,sep="\t",quote=FALSE)
 
+###########  6) Add Viral Load into Equation ##################
+
+##Look at original phenotype##
+tedf[1:22,1:23]
+
+colnames(tedf[,1:30])
+[1] "Patient.ID"                   "Replicate"                   
+[3] "Treatment"                    "Patient"                     
+[5] "Patient.ID.1"                 "Age"                         
+[7] "Sex"                          "Race"                        
+[9] "Baseline.Ishak.Score"         "Baseline.Fibrosis.Group"     
+[11] "HCV.Genotype"                 "Timing"                      
+[13] "Basline.Bx.Code"              "Date.of.Baseline.Bx"         
+[15] "F.U.Bx.Code"                  "Date.of.F.U.Bx"              
+[17] "Days.Base.to.F.U.Bx"          "F.U.Bx.Week"                 
+[19] "HCV.RNA.at.F.U.Bx..Neg..Pos." "HCV.RNA.at.F.U.Bx.Value"     
+[21] "SVR12"                        "Failed"                      
+[23] "Cause.of.Failure"             "16650001"  
 
 
+tedf3 <- ddply(tedf, c("Patient.ID", "Treatment","Baseline.Fibrosis.Group","HCV.Genotype",
+                       "Failed","HCV.RNA.at.F.U.Bx.Value"), 
+               function(x) colMeans(x[,24:ncol(x)]))
+c("tedf3$HCV.RNA.at.F.U.Bx.Value","tedf3$Failed")
 
 
+dim(tedf3[tedf3$HCV.Genotype=="1b",] )
+[1]    22 53625
+
+Gt1b=tedf3[tedf3$HCV.Genotype=="1b",]
+Gt1b[,1:6]
+
+Gt1b$Virus="1"
+Gt1b$Virus[(Gt1b$HCV.RNA.at.F.U.Bx.Value=="<43") | 
+              (Gt1b$HCV.RNA.at.F.U.Bx.Value== "Neg") ]="0"
+Gt1b$Treatment.Group="Treated"
+Gt1b$Treatment.Group[(Gt1b$Treatment=="Base")]="Untreated" 
+
+dim(Gt1b)
+[1]    22 53625
+Gt1b <- Gt1b[ ,c(1:6,53624:53625,7:53623)]
+Gt1b[1:22,1:8]
+
+Patient.ID Treatment Baseline.Fibrosis.Group HCV.Genotype Failed HCV.RNA.at.F.U.Bx.Value
+1         110      Base                   F_5_6           1b      0                     <43
+2         110       Wk4                   F_5_6           1b      0                     <43
+7         513      Base                   F_0_2           1b      0                     Neg
+8         513       Wk4                   F_0_2           1b      0                     Neg
+11        814      Base                   F_0_2           1b      1                     249
+12        814       Wk2                   F_0_2           1b      1                     249
+17        975      Base                   F_3_4           1b      0                      46
+18        975       Wk2                   F_3_4           1b      0                      46
+25       1059      Base                   F_5_6           1b      1                     <43
+26       1059       Wk2                   F_5_6           1b      1                     <43
+27       1154      Base                   F_3_4           1b      0                     Neg
+28       1154       Wk4                   F_3_4           1b      0                     Neg
+29       1230      Base                   F_0_2           1b      0                     <43
+30       1230       Wk4                   F_0_2           1b      0                     <43
+35       1505      Base                   F_3_4           1b      0                     <43
+36       1505       Wk4                   F_3_4           1b      0                     <43
+49       2168      Base                   F_5_6           1b      1                     <43
+50       2168       Wk2                   F_5_6           1b      1                     <43
+55       2783      Base                   F_5_6           1b      1                     101
+56       2783       Wk2                   F_5_6           1b      1                     101
+63       2957      Base                   F_3_4           1b      0                     Neg
+64       2957       Wk4                   F_3_4           1b      0                     Neg
+Virus Treatment.Group
+1      0       Untreated
+2      0         Treated
+7      0       Untreated
+8      0         Treated
+11     1       Untreated
+12     1         Treated
+17     1       Untreated
+18     1         Treated
+25     0       Untreated
+26     0         Treated
+27     0       Untreated
+28     0         Treated
+29     0       Untreated
+30     0         Treated
+35     0       Untreated
+36     0         Treated
+49     0       Untreated
+50     0         Treated
+55     1       Untreated
+56     1         Treated
+63     0       Untreated
+64     0         Treated
+
+
+Gt1b_Base=Gt1b[Gt1b$Treatment=="Base",]
+dim(Gt1b_Base)
+[1]    11 53625
+
+Failed=as.factor(Gt1b_Base$Failed)
+Virus=as.factor(Gt1b_Base$Virus)
+table(Failed,Virus) ##  Looks like 2 with virus failed and 1 with virus was successful
+
+### 3 with virus and 9 without - 2 failed and 1 succeeded.
+Virus
+Failed 0 1
+0 6 1
+1 2 2
+
+Gt1b.mat=(as.matrix(Gt1b[, 9:53625]))
+pca=prcomp(Gt1b.mat)
+
+TreatVirus <- factor(paste(Gt1b$Virus,Gt1b$Treatment.Group,sep=".")) 
+
+library(rgl)
+open3d() 
+
+plot3d(pca$x[,1:3],col=as.numeric(as.factor(TreatVirus)), 
+       type="s",size=2)
+group.v<-as.vector(TreatVirus)
+text3d(pca$x, pca$y, pca$z, group.v, cex=0.6, adj = 1) 
+rgl.postscript("pca3d_Gt1b_TreatVirus.pdf","pdf")
+
+###
