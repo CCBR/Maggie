@@ -1,13 +1,26 @@
 setwd("/Users/maggiec/Documents/Deblina")
 setwd("/Volumes/CCBR/CCRIFXCCR/ccbr482/RNASeq/bam/")
+setwd("/Users/maggiec/GitHub/Maggie/ccbr482")
 load("Gencode_fc.RData")
 load(".RData")
 targets <- readTargets()
 
+biocLite("biomaRt")
+library(biomaRt)
+###Done 
+
+gtf="/data/maggiec/RNASeq/Genomes/hg19/gencode.v22.annotation.gtf"
+library(Rsubread)
+library(limma)
+targets <- readTargets()
+
+fc_paired_r <- featureCounts(files=targets$bam,isGTFAnnotationFile=TRUE,nthreads=32,
+            annot.ext=gtf,GTF.attrType="gene_name",strandSpecific=2,isPairedEnd=TRUE)
+
 fc=fc_paired_r
 ls()
 library(edgeR)
-options(digits=2)
+options(digits=3)
 
 x <- DGEList(counts=fc$counts, genes=fc$annotation)
 
@@ -31,28 +44,58 @@ dev.off()
 
 ###Do Normalization: cpm is further normalized by quantile
 ##v1 = scaled by lib.size then quantile norm
+x$counts[x$genes$GeneID=="MYCN",]
+x$counts[x$genes$GeneID=="RARB",]
+
+x <- DGEList(counts=fc$counts, genes=fc$annotation)
+isexpr <- rowSums(cpm(x)>1) >= 2
+hasannot <- rowSums(is.na(x$genes))==0
+x <- x[isexpr & hasannot,,keep.lib.sizes=FALSE]
+dim(x)
+[1] 14109     6
+
+x <- calcNormFactors(x)
 celltype <- factor(targets$condition)
 design <- model.matrix(~celltype)
+design
 
 targets
-v1 <- voom(as.matrix(fc1filt),design,lib.size =x$samples[,2],
-           normalize="quantile")
+v <- voom(as.matrix(x),design,plot=TRUE,normalize="quantile")
 
-dim(v1)
-#[1] 11947    18
-#[1] 15111    18  (including new lncRNA)
+plotMDS(v,top=50,labels=substring(celltype,1,1), 
+      col=ifelse(celltype=="C","blue","red"),gene.selection="common")
 
-v <- voom(fc$counts, design) 
-fit <- eBayes(lmFit(v, design)) 
-topTable(fit, coef=2)
-
-v2 <- voom(as.matrix(fc1filt),design,lib.size =x$samples[,2],
+v2 <- voom(as.matrix(x),design,lib.size =x$samples[,2],
            normalize="none")
+
+fit <- lmFit(v,design) 
+fit <- eBayes(fit) 
+options(digits=3) 
+topTable(fit,coef=2,n=16,sort="p")
+volcanoplot(fit,coef=2)  
+
+#####Write out Results ############
+
+finalres=topTable(fit,coef=2,sort="none",n=Inf)
+
+FC = 2^(fit$coefficients[,2])
+FC = ifelse(FC<1,-1/FC,FC)
+
+finalres = cbind(v$E,FC,finalres)
+
+finalres[rownames(finalres)=="RARB",] 
+finalres[rownames(finalres)=="MYCN",] 
+
+
+datadir="/Volumes/maggiec/Projects/ccbr482/Results"
+setwd(datadir)
+write.table(finalres,file="Gencode_FCpval_new.txt",
+      row.names=TRUE,col.names=TRUE,sep="\t",quote=FALSE)
 
 #####Look after quantile normalization:
 
 head(v1$weights)
-df.n <- melt(as.data.frame(v1$E))
+df.n <- melt(as.data.frame(v$E))
 df.n <- melt(as.data.frame(v2$E))  #look at non-normalized
 
 jpeg(filename = "disp_plot_nonnorm.jpeg", width = 480, height = 480, 
@@ -64,7 +107,8 @@ ggplot(df.n) + geom_density(aes(x = value,
   theme(legend.position='top')
 dev.off()
 
-
+datadir="/Volumes/maggiec/Projects/ccbr482/Results"
+setwd(datadir)
 write.table(v1$E,file="Gencode_voom_Q_Ctrl.txt",
             row.names=TRUE,col.names=TRUE,sep="\t",quote=FALSE)
 write.table(v1$E,file="Gencode_voom_none.txt",
@@ -143,21 +187,24 @@ Group = as.factor(targets$condition)
 design=model.matrix(~0+Group)
 colnames(design)
 v=v1
-#v <- voom(fc$counts,design,plot=TRUE)
+v=v2
+
 fit <- lmFit(v,design) 
 fit <- eBayes(fit) 
-topTable(fit,coef=ncol(design))
-head(topTable(fit,coef=2,sort="none",n=Inf))
-finalres=topTable(fit,coef=2,sort="none",n=Inf)
 
 
-FC = 2^(fit$coefficients[,2])
-FC = ifelse(FC<1,-1/FC,FC)
+plot(fit,coef=2, main="RA vs C", legend="bottomright") 
 
-finalres = cbind(v$E,FC,finalres)
-
-finalres[rownames(finalres)=="RARB",] 
+abline(h=0,col="darkgrey") 
 
 
-write.table(finalres,file="Gencode_FCpval.txt",
-        row.names=TRUE,col.names=TRUE,sep="\t",quote=FALSE)
+gtf_annot=read.delim("data/gencode.v19.annotation.gtf")
+
+gtf_annot=read.delim("data/gencode.trunc", skip=5,header=FALSE)
+gene_annot=as.character(gtf_annot$V9)
+gene_list=strsplit(gene_annot, split=";")
+ 
+gene_name=strsplit(gene_list[[1]][5],split=" ")
+gene_type=strsplit(gene_list[[1]][3],split=" ")
+
+gene_info=paste(gene_name[[1]][3],gene_type[[1]][3])
