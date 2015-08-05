@@ -1327,6 +1327,6 @@ plot3d(pca$x[,1:3],col=as.numeric(as.factor(TreatVirus)),
        type="s",size=2)
 group.v<-as.vector(TreatVirus)
 text3d(pca$x, pca$y, pca$z, group.v, cex=0.6, adj = 1) 
-rgl.postscript("pca3d_Gt1b_TreatVirus.pdf","pdf")
+rgl.postscript("figures/pca3d_Gt1b_TreatVirus.pdf","pdf")
 
 ###
