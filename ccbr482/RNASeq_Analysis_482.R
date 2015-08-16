@@ -3,18 +3,19 @@ setwd("/Volumes/CCBR/CCRIFXCCR/ccbr482/RNASeq/bam/")
 setwd("/Users/maggiec/GitHub/Maggie/ccbr482")
 load("data/Gencode_fc.RData")
 load(".RData")
+load("Gencode_fc_downsamp.RData")
 targets <- readTargets()
 
 biocLite("biomaRt")
 library(biomaRt)
 ###Done 
 
-gtf="/data/maggiec/RNASeq/Genomes/hg19/gencode.v22.annotation.gtf"
+gtf="/data/maggiec/RNASeq/Genomes/hg19/gencode.v19.annotation.gtf"
 library(Rsubread)
 library(limma)
 targets <- readTargets()
 
-fc_paired_r <- featureCounts(files=targets$bam,isGTFAnnotationFile=TRUE,nthreads=32,
+fc <- featureCounts(files=targets$bam,isGTFAnnotationFile=TRUE,nthreads=32,
             annot.ext=gtf,GTF.attrType="gene_name",strandSpecific=2,isPairedEnd=TRUE)
 
 fc=fc_paired_r
@@ -24,11 +25,28 @@ options(digits=3)
 
 x <- DGEList(counts=fc$counts, genes=fc$annotation)
 
+#Look at number of genes detected at > 5 counts/sample
+apply(fc$counts,2,function(x)length(x[x>5]))
+
+X24h_C1_ATCACG.bam  X24h_C2_ACTTGA.bam       X24h_C3_2.bam X24h_RA1_TTAGGC.bam 
+15928               16132               16706               16694 
+X24h_RA2_GATCAG.bam      X24h_RA3_2.bam 
+17087               17003 
+
+###Downsample:
+apply(fc$counts,2,function(x)length(x[x>5]))
+X24h_C1_ATCACG.bam  X24h_C2_ACTTGA.2.bam       X24h_C3_2.2.bam 
+15928                 15987                 16186 
+X24h_RA1_TTAGGC.2.bam X24h_RA2_GATCAG.2.bam      X24h_RA3_2.2.bam 
+16303                 16499                 16246
+
+####
 fc1=mat=fc$counts
 tfc1=t(fc1)
 filter <- apply(fc1, 1, function(x) length(x[x>5])>=1)
 fc1filt <- fc1[filter,]
 genes <- rownames(fc1filt)
+dim(fc1filt)
 
 ####Histogram: Look at distribution of data before quantile:
 library(reshape)
@@ -56,7 +74,8 @@ dim(x)
 
 x <- calcNormFactors(x)
 celltype <- factor(targets$condition)
-design <- model.matrix(~celltype)
+Replicate <- factor(targets$replicate)
+design <- model.matrix(~Replicate+celltype)
 design
 
 targets
@@ -71,14 +90,14 @@ v2 <- voom(as.matrix(x),design,lib.size =x$samples[,2],
 fit <- lmFit(v,design) 
 fit <- eBayes(fit) 
 options(digits=3) 
-topTable(fit,coef=2,n=16,sort="p")
-volcanoplot(fit,coef=2)  
+topTable(fit,coef=4,n=16,sort="p")
+volcanoplot(fit,coef=4)  
 
 #####Write out Results ############
 
-finalres=topTable(fit,coef=2,sort="none",n=Inf)
+finalres=topTable(fit,coef=4,sort="none",n=Inf)
 
-FC = 2^(fit$coefficients[,2])
+FC = 2^(fit$coefficients[,4])
 FC = ifelse(FC<1,-1/FC,FC)
 
 finalres = cbind(v$E,FC,finalres)
@@ -89,8 +108,12 @@ finalres[rownames(finalres)=="MYCN",]
 
 datadir="/Volumes/maggiec/Projects/ccbr482/Results"
 setwd(datadir)
-write.table(finalres,file="Gencode_FCpval_new.txt",
+write.table(finalres2,file="Gencode_FCpval_new_paired.txt",
       row.names=TRUE,col.names=TRUE,sep="\t",quote=FALSE)
+
+
+write.table(finalres2,file="Gencode_FCpval_new_paired_downsamp.txt",
+            row.names=TRUE,col.names=TRUE,sep="\t",quote=FALSE)
 
 #####Look after quantile normalization:
 
@@ -183,9 +206,12 @@ boxplot(value~variable,data=df.m)
 write.table(actscale,file="scaling_factors.txt",
             row.names=TRUE,col.names=NA,sep="\t",quote=FALSE)
 
+
+targets$replicate=c(1,2,3,1,2,3)
 Group = as.factor(targets$condition)
-Replicate = as.factor(targets$)
-design=model.matrix(~0+Group)
+Replicate = as.factor(targets$replicate)
+#design=model.matrix(~0+Group)
+design=model.matrix(~Replicate+Group)
 colnames(design)
 v=v1
 v=v2
@@ -206,12 +232,26 @@ gene_annot=as.character(gtf_annot$V9)
 gene_list=strsplit(gene_annot, split=";")
 gene_list2=sapply(gene_list,function(x) x[5:3])
 genelist3=substr(gene_list2, 12, nchar(gene_list2))
-t(genelist3)
+#t(genelist3)
 gene.df=as.data.frame(t(genelist3))
-gene.df=unique(gene.df)
+gene.df$type=substr(gene.df$V2,3,10)
 
+gene.df=gene.df[c(1,3:4)]
+gene.df=gene.df[!duplicated(gene.df[,1]),]
+colnames(gene.df)=c("gene","type","status")
 
-finalres2 = merge(finalres,annot,by.x="ID",by.y="ID")
+finalres$ID=rownames(finalres)
+finalres2 = merge(finalres,gene.df,by.x="ID",by.y="gene")
+
+finalres2[finalres2$ID=="RARB",]
+
+####For GO Analysis#########
+
+FCresults = cbind(finalres$ID,finalres$FC,finalres$P.Value)
+colnames(FCresults)=c("ID","FC","pval")
+
+write.table(FCresults,file="MYCN-RA-DS_results.txt",quote=FALSE,row.names=FALSE,sep="\t")
+write.table(finalres$ID,file="RNASeq.chip",quote=FALSE,row.names=FALSE,col.names=FALSE)
 
 
 
