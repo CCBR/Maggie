@@ -14,7 +14,9 @@ setwd("/data/CCBR/projects/ccbr601/Niddk4MGHany-5-6-15/04-24-14-MGhany_HA-HuGene
 
 setwd("/Volumes/CCBR/projects/ccbr601/Niddk4MGHany-5-6-15/04-24-14-MGhany_HA-HuGene2_ST/")
 setwd("/Users//maggiec//Documents/Ghany/")
-load(".RData")
+
+setwd("/Users/maggiec/GitHub/Maggie/ccbr601/data")
+load("ccbr601.RData")
 
 celFiles=read.table("covdesc2",header=TRUE,fill=TRUE)[,1]
 
@@ -738,20 +740,49 @@ table(Patient,Treatment)
 2783       1         1
 2957       1         1
 
-design <- model.matrix(~Patient+Treatment) 
+#design <- model.matrix(~Patient+Treatment) 
 Gt1b.mat=t(as.matrix(Gt1b[, 9:53625]))
-fit <- lmFit(Gt1b.mat, design) 
-fit <- eBayes(fit) 
-topTable(fit, coef="TreatmentUntreated")  
-finalres=topTable(fit,coef="TreatmentUntreated",sort="none",n=Inf)
 
-FC = 2^finalres[,1]
-FC = 1/FC
+design <- model.matrix(~0+Treatment) 
+corfit <- duplicateCorrelation(Gt1b.mat,design,block=Gt1b$Patient.ID)
+corfit$consensus
+fit <- lmFit(Gt1b.mat,design,block=Gt1b$Patient.ID,correlation=corfit$consensus)
+
+
+#fit <- lmFit(Gt1b, design) 
+#fit <- eBayes(fit) 
+#topTable(fit, coef="TreatmentUntreated")  
+#finalres=topTable(fit,coef="TreatmentUntreated",sort="none",n=Inf)
+
+cm <- makeContrasts(Treatment = TreatmentTreated-TreatmentUntreated,
+                    levels=design) 
+fit2 <- contrasts.fit(fit, cm)
+fit2 <- eBayes(fit2)
+topTable(fit2, coef=1)
+volcanoplot(fit2,coef=1)
+finalres=topTable(fit2,sort="none",n=Inf)
+
+FC = 2^(fit2$coefficients)
 FC = ifelse(FC<1,-1/FC,FC)
 
 finalres = as.data.frame(cbind(FC,finalres))
 
 dim(finalres)
+
+key=keys(hugene20stprobeset.db) #probe level
+key=keys(hugene20sttranscriptcluster.db) #Probeset level
+annot = AnnotationDbi::select(hugene20sttranscriptcluster.db, keys=key, 
+                              columns=c("SYMBOL","REFSEQ","GENENAME"),keytype="PROBEID")
+annot=annot[!duplicated(annot$PROBEID), ]
+
+finalres$ID = rownames(finalres)
+colnames(annot) = c("PROBEID","SYMBOL","REFSEQ","GENE")
+
+finalres5 = merge(finalres,annot,by.x="ID",by.y="PROBEID") #Gt1b
+write.table(finalres5,file="all_results_Gt1b.txt",row.names=FALSE,sep="\t",quote=FALSE)
+
+
+
 
 ##########  Look at Treatment Failure within Gt1b ############
 dim(Gt1b)
@@ -792,7 +823,7 @@ cm <- makeContrasts(FailedvsSuccessUntreated = Failed.Untreated-Success.Untreate
 fit2 <- contrasts.fit(fit, cm)
 fit2 <- eBayes(fit2)
 topTable(fit2, coef="TreatedvsUntreatedForSuccess")
-
+volcanoplot(fit2,coef=2)
 finalres=topTable(fit2,sort="none",n=Inf)
 
 results <- decideTests(fit2,adjust.method="none",p.value=0.05,lfc=0.58)
@@ -801,7 +832,7 @@ vennDiagram(results[,1:2],include=c("up","down"),
 vennDiagram(results[,3:4],include=c("up","down"),
             counts.col=c("red","green"),cex=1.0)
 
-FC = 2^finalres[,1:4]
+FC = 2^(fit2$coefficients[,1:4])
 FC = ifelse(FC<1,-1/FC,FC)
 colnames(FC)=paste(colnames(FC),"FC",sep="_")
 pvalall=fit2$p.value
@@ -829,8 +860,6 @@ TxvsUntx_Failed=finalres[((finalres[,4]>=1.2 | finalres[,4]<=-1.2) & finalres[,8
 
 
 dim(finalres)
-
-
 
 
 
@@ -898,11 +927,11 @@ write.table(finalres6,file="failvsnonfail_results_Gt1b.txt",row.names=FALSE,sep=
 
 ################Re-do finalres6 - just treated vs untreated################
 
-colnames(finalres6)
+colnames(finalres5)
 [1] "ID"        "FC"        "logFC"     "AveExpr"   "t"         "P.Value"   "adj.P.Val"
 [8] "B"         "PROBEID"   "SYMBOL"    "REFSEQ"    "GENE"  
 
-write.table(finalres6,file="all_results_Gt1b.txt",row.names=FALSE,sep="\t",quote=FALSE)
+write.table(finalres5,file="all_results_Gt1b.txt",row.names=FALSE,sep="\t",quote=FALSE)
 
 
 #########################
