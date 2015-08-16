@@ -1,7 +1,7 @@
 setwd("/Users/maggiec/Documents/Deblina")
 setwd("/Volumes/CCBR/CCRIFXCCR/ccbr482/RNASeq/bam/")
 setwd("/Users/maggiec/GitHub/Maggie/ccbr482")
-load("Gencode_fc.RData")
+load("data/Gencode_fc.RData")
 load(".RData")
 targets <- readTargets()
 
@@ -184,6 +184,7 @@ write.table(actscale,file="scaling_factors.txt",
             row.names=TRUE,col.names=NA,sep="\t",quote=FALSE)
 
 Group = as.factor(targets$condition)
+Replicate = as.factor(targets$)
 design=model.matrix(~0+Group)
 colnames(design)
 v=v1
@@ -198,13 +199,60 @@ plot(fit,coef=2, main="RA vs C", legend="bottomright")
 abline(h=0,col="darkgrey") 
 
 
-gtf_annot=read.delim("data/gencode.v19.annotation.gtf")
+gtf_annot=read.delim("data/gencode.v19.annotation.gtf",  skip=5,header=FALSE)
+#gtf_annot=read.delim("data/gencode.trunc", skip=5,header=FALSE)
 
-gtf_annot=read.delim("data/gencode.trunc", skip=5,header=FALSE)
 gene_annot=as.character(gtf_annot$V9)
 gene_list=strsplit(gene_annot, split=";")
- 
-gene_name=strsplit(gene_list[[1]][5],split=" ")
-gene_type=strsplit(gene_list[[1]][3],split=" ")
+gene_list2=sapply(gene_list,function(x) x[5:3])
+genelist3=substr(gene_list2, 12, nchar(gene_list2))
+t(genelist3)
+gene.df=as.data.frame(t(genelist3))
+gene.df=unique(gene.df)
 
-gene_info=paste(gene_name[[1]][3],gene_type[[1]][3])
+
+finalres2 = merge(finalres,annot,by.x="ID",by.y="ID")
+
+
+
+
+############  Trials
+
+
+gene_matrix = data.frame()
+
+for (i in 1:length(gene_list)){
+  gene_name=strsplit(gene_list[[i]][5],split=" ")
+  gene_type=strsplit(gene_list[[i]][3],split=" ")
+  gene_matrix[i,1] = gene_name[[1]][3]
+  gene_matrix[i,2] = gene_type[[1]][3]
+}
+length(gene_list)
+lapply(1:length(gene_list))
+gene_name=strsplit(gene_list[[i]][5],split=" ")
+gene_type=strsplit(gene_list[[i]][3],split=" ")
+gene_matrix[i,1] = gene_name[[1]][3]
+gene_matrix[i,2] = gene_type[[1]][3]
+}
+
+
+
+gene_name=strsplit(gene_list[[i]][5],split=" ")[[1]][3]
+gene_type=strsplit(gene_list[[i]][3],split=" ")[[1]][3]
+
+make_annot <- function(gene, type){
+  paste(strsplit(gene,split=" ")[[1]][3],strsplit(type,split=" ")[[1]][3],sep=":")
+}  
+lapply(genelist,)
+
+
+gene_df = data.frame(matrix(ncol = 3, nrow = 100))
+colnames(gene_df)=c("gene_name","gene_status","gene_type")
+lapply(gene_list,function(i) unlist(i)) 
+
+gene_name=strsplit(gene_list[[i]][5],split=" ")
+gene_df[i,]=as.data.frame.list(gene_list[[i]][5:3]))
+gene_df =cbind(gene_df,g1))
+}
+
+gene_matrix=unique(gene_matrix)
