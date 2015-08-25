@@ -1,0 +1,163 @@
+
+---
+title: "Identification of epigenetic modifiers of neuroblastoma"
+output:
+  html_document:
+    pandoc_args: [
+      "+RTS", "-K64m",
+      "-RTS"
+    ]
+---
+## *CCBR-482*
+#### *Maggie Cam*
+#### *August 22, 2015*
+
+## **Background**
+Neuroblastoma (NB) is a rare childhood cancer affecting 10.2 cases per million children under 15 years of age in the United States. The median age at diagnosis is 17 months, being the most common cancer diagnosed in the first year of life.
+
+The epigenotype of neuroblastoma is still poorly understood. Present literature on neuroblastoma and our in house experiments clearly states that MYCN and EZH2 are essential epigenetic modulators, shaping the biology of NB. With the discovery of super-enhancers and their functional importance in cancer, it is tempting to hypothesize that MYCN the master regulator of NB, binds to super-enhancers, along with other crucial transcription factors, thus determining the cell fate. The Polycomb Repressor Complex (PRC2) subunit EZH2 along with MYCN is expected to be another critical epigenetic modifier binding the super-enhancers.
+
+Gene Expression and Chip-Seq experiments will be carried out on KCNR cells (MYCN amplified) at steady state or after treatment with Retinoic acid.
+
+## **Data Processing**
+####*This part of the program was run on biowulf, and data transferred to a local directory*
+
+```{r, echo=FALSE}
+library(Rsubread)
+library(limma)
+library(edgeR)
+library(ggplot2)
+```
+
+```{r, eval=FALSE}
+gtf="gencode.v19.annotation.gtf"
+targets <- readTargets()
+fc <- featureCounts(files=targets$bam,isGTFAnnotationFile=TRUE,nthreads=32,
+      annot.ext=gtf,GTF.attrType="gene_name",strandSpecific=2,isPairedEnd=TRUE)
+x <- DGEList(counts=fc$counts, genes=fc$annotation)
+
+```
+####*Load data from local directory:*
+
+```{r}
+load("data/Gencode_fc_downsamp.RData")
+fc1=mat=fc$counts
+tfc1=t(fc1)
+filter <- apply(fc1, 1, function(x) length(x[x>5])>=1)
+fc1filt <- fc1[filter,]
+genes <- rownames(fc1filt)
+
+```
+
+#
+####*QC Check: Look at raw signal distribution and median expression levels*
+
+```{r fig.width=10, fig.height=5, echo=FALSE, warning=FALSE,message=FALSE}
+
+library(ggplot2)
+library(reshape)
+
+fc1filt=as.data.frame(fc1filt)
+fc1filtnames=sapply(strsplit(colnames(fc1filt),split="_"),function(x) x[2])
+colnames(fc1filt)=fc1filtnames
+df.m <- melt(as.data.frame(fc1filt))
+ggplot(df.m) + 
+  geom_density(aes(x = value, colour = variable)) + labs(x = NULL) +
+  theme(legend.position='right') + scale_x_log10() + ggtitle("Raw Counts")
+
+
+boxplot(log(value)~variable,data=df.m,main="Raw Signal", 
+  	xlab="Sample", ylab="Counts",col=c(2,2,2,3,3,3))
+
+```
+
+####*Data is converted to cpm and further normalized by quantile normalization*
+```{r}
+x <- DGEList(counts=fc$counts, genes=fc$annotation)
+isexpr <- rowSums(cpm(x)>1) >= 2
+hasannot <- rowSums(is.na(x$genes))==0
+x <- x[isexpr & hasannot,keep.lib.sizes=FALSE]
+
+dim(x)
+
+x <- calcNormFactors(x)
+targets$replicate=c(1,2,3,1,2,3)
+celltype <- factor(targets$condition)
+Replicate <- factor(targets$replicate)
+cell_rep=paste(celltype,Replicate,sep=".")
+design <- model.matrix(~Replicate+celltype)
+design
+
+v <- voom(as.matrix(x),design,plot=TRUE,normalize="quantile")
+plotMDS(v,top=50,labels=substring(cell_rep,1,4), 
+      col=ifelse(celltype=="C","blue","red"),gene.selection="common")
+
+```
+```{r,echo=FALSE,message=FALSE}
+
+colnames(v$E)=fc1filtnames
+df.m <- melt(as.data.frame(v$E))
+
+ggplot(df.m) + 
+  geom_density(aes(x = value, colour = variable)) + labs(x = NULL) +
+  theme(legend.position='right') + ggtitle("Normalized Counts")
+
+boxplot(value~variable,data=df.m,main="Normalized Signal", 
+  	xlab="Sample", ylab="Counts",col=c(2,2,2,3,3,3))
+
+```
+
+#
+####*QC Check: Known effect of RA on MYCN Expression*
+
+```{r, fig.width=10, fig.height=5, warning=FALSE,echo=FALSE}
+
+###*After Normalization*
+MYCN_count=v$E[rownames(v$E)=="MYCN",]
+names(MYCN_count)=c("C1","C2","C3","RA1","RA2","RA3")
+barplot(2^MYCN_count,legend.txt=labels,col=c(2,2,2,3,3,3), las = 2,main="MYCN Counts: Normalized")
+
+RARB_count=v$E[rownames(v$E)=="RARB",]
+names(RARB_count)=c("C1","C2","C3","RA1","RA2","RA3")
+barplot(2^RARB_count,legend.txt=labels,col=c(2,2,2,3,3,3), las = 2,main="RARB Counts: Normalized")
+
+```
+
+```{r}
+fit <- lmFit(v,design) 
+fit <- eBayes(fit) 
+options(digits=3) 
+topTable(fit,coef=4,n=16,sort="p")
+volcanoplot(fit,coef=4)  
+FC = 2^(fit$coefficients[,4])
+FC = ifelse(FC<1,-1/FC,FC)
+
+```
+```{r, setOptions, message=FALSE}
+library(googleVis)
+op <- options(gvis.plot.tag='chart')
+
+```
+```{r results='asis', tidy=FALSE}
+volcano_data=as.data.frame(cbind(fit$coefficients[,4],-1*log10(fit$p.value[,4])))
+volcano_data$pop.html.tooltip=rownames(volcano_data)
+Scatter <- gvisScatterChart(volcano_data, 
+          options=list(
+          tooltip="{isHtml:'True'}",
+          legend='none',
+          lineWidth=0, pointSize=1,
+          title='RA vs Con', vAxis="{title:'Log Odds'}",
+          hAxis="{title:'Log Fold Change'}", 
+          width=800, height=800,
+          hAxes="[{viewWindowMode:'explicit', viewWindow:{min:-10, max:10}}]",
+          vAxes="[{viewWindowMode:'explicit', viewWindow:{min:0, max:20}}]"))
+plot(Scatter)
+
+```
+
+```{r resetOptions}
+## Set options back to original options
+options(op)
+```
+
+
