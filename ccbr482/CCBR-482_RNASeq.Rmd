@@ -127,7 +127,8 @@ barplot(2^RARB_count,legend.txt=labels,col=c(2,2,2,3,3,3), las = 2,main="RARB Co
 fit <- lmFit(v,design) 
 fit <- eBayes(fit) 
 options(digits=3) 
-topTable(fit,coef=4,n=16,sort="p")
+topgenes=topTable(fit,coef=4,n=50,sort="p")
+topgenes
 volcanoplot(fit,coef=4)  
 FC = 2^(fit$coefficients[,4])
 FC = ifelse(FC<1,-1/FC,FC)
@@ -138,7 +139,7 @@ library(googleVis)
 op <- options(gvis.plot.tag='chart')
 
 ```
-```{r results='asis', tidy=FALSE}
+```{r results='asis', tidy=FALSE,echo=FALSE}
 volcano_data=as.data.frame(cbind(fit$coefficients[,4],-1*log10(fit$p.value[,4])))
 volcano_data$pop.html.tooltip=rownames(volcano_data)
 Scatter <- gvisScatterChart(volcano_data, 
@@ -153,6 +154,21 @@ Scatter <- gvisScatterChart(volcano_data,
           vAxes="[{viewWindowMode:'explicit', viewWindow:{min:0, max:20}}]"))
 plot(Scatter)
 
+
+MAplot_data=as.data.frame(cbind(fit$Amean,fit$coefficients[,4]))
+MAplot_data$pop.html.tooltip=rownames(MAplot_data)
+Scatter <- gvisScatterChart(MAplot_data, 
+          options=list(
+          tooltip="{isHtml:'True'}",
+          legend='none',
+          lineWidth=0, pointSize=1,
+          title='MA Plot', vAxis="{title:'M'}",
+          hAxis="{title:'A'}", 
+          width=800, height=800,
+          hAxes="[{viewWindowMode:'explicit', viewWindow:{min:-5, max:20}}]",
+          vAxes="[{viewWindowMode:'explicit', viewWindow:{min:-10, max:20}}]"))
+plot(Scatter)
+
 ```
 
 ```{r resetOptions}
@@ -160,4 +176,12 @@ plot(Scatter)
 options(op)
 ```
 
+```{r}
 
+library(d3heatmap)
+topgenes_data=v$E[rownames(v$E) %in% rownames(topgenes),]
+d3heatmap(topgenes_data, scale = "column", dendrogram = "none",
+    color = "YlOrRd")
+
+
+```
