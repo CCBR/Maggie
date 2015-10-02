@@ -180,6 +180,7 @@ options(op)
 
 library(d3heatmap)
 topgenes_data=v$E[rownames(v$E) %in% rownames(topgenes),]
+topgenes_data=topgenes_data[match(rownames(topgenes),rownames(topgenes_data)),]
 d3heatmap(topgenes_data, scale = "column", dendrogram = "none",
     color = "YlOrRd")
 

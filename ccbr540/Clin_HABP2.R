@@ -2,13 +2,13 @@
 #BRCA, COAD, LUAD, LUSC, READ, SKCM, THCA
 type="THCA"
 
-p <- function(..., sep='') {
-  paste(..., sep=sep, collapse=sep)
+p <- function(..., sep=',') {
+  paste(..., sep="", collapse=sep)
 }
 
 library(stringr)
-setwd(p("/Users/maggiec/GitHub/Maggie/ccbr540/data/gdac.broadinstitute.org_",type,
-        ".Merge_Clinical.Level_1.2015060100.0.0"))
+dir=p("/Users/maggiec/GitHub/Maggie/ccbr540/data/gdac.broadinstitute.org_",type,".Merge_Clinical.Level_1.2015060100.0.0")
+setwd(dir)
 
 #clin = read.csv("tp_clindata.txt", na.strings = "",header=TRUE, sep="\t")
 #clin = read.csv("tp_BRCA_clinical.txt", na.strings = "",header=TRUE, sep="\t")
@@ -18,7 +18,7 @@ clin = read.csv(p("tp_",type,"_clinical.txt"), na.strings = "",header=TRUE, sep=
 # relative=clin$patient.first_degree_relative_history_thyroid_gland_carcinoma_diagnosis_relationship_types.first_degree_relative_history_thyroid_gland_carcinoma_diagnosis_relationship_type
 # patient=clin$patient.bcr_patient_barcode
 # survival=clin$patient.clinical_cqcf.days_to_death
-# ethnicity=clin$patient.ethnicity
+ ethnicity=clin$patient.ethnicity
 # status=clin$patient.extrathyroid_carcinoma_present_extension_status
 # dead=clin$patient.vital_status
 # age=clin$patient.age_at_initial_pathologic_diagnosis
@@ -53,10 +53,12 @@ snpdat$patid2=tolower(paste(id[,1],id[,2],id[,3],sep="-"))
 
 snpdat$snpid="0/0"
 
-for (i in 2:7){
+#for (i in 2:7){
+for (i in 7) {
 snpgt=strsplit(as.character(snpdat[,i]), split=":")
 snpdat$snp=sapply(snpgt,function(x) x[1])
 snpdat$snpid[snpdat$snp=="0/1"]="0/1"
+snpdat$snpid[snpdat$snp=="1/1"]="0/1"
 }
 
 snpdat=snpdat[!duplicated(snpdat$patid2), ]
@@ -68,7 +70,8 @@ dim(snpdat)
 [1] 484  10  #LUSC
 [1] 114  10  #READ
 [1] 470  10 #SKCM
-[1] 373  10  #THCA
+[1] 423  10  #THCA
+
 
 dim(snpdat[snpdat$snpid=="0/1",])
 [1] 87 10  # BRCA
@@ -77,7 +80,7 @@ dim(snpdat[snpdat$snpid=="0/1",])
 [1] 46 10  #LUSC
 [1]  6 10  #READ
 [1] 53 10  #SKCM
-[1] 29 10  #THCA
+[1] 20 10  #THCA
 
 dim(snpdat[snpdat$snpid=="0/0",])
 [1] 1027   10  #BRCA
@@ -86,7 +89,7 @@ dim(snpdat[snpdat$snpid=="0/0",])
 [1] 438  10  #LUSC
 [1] 108  10  #READ
 [1] 417  10  #SKCM
-[1] 344  10  #THCA
+[1] 403  10  #THCA
 
 mergedat2=merge(clin,snpdat,by.x="patient.bcr_patient_barcode",by.y="patid2")
 
@@ -107,6 +110,17 @@ dim(mergedat2)
 [1]  114 2751  #READ
 [1]  469 1886 #SKCM
 [1] 364 578  #THCA
+
+library(plyr)
+count(mergedat2, "patient.race")
+
+patient.race freq
+1 american indian or alaska native    1
+2                            asian   44
+3        black or african american   13
+4                               NA   90
+5                            white  270
+
 
 #snpid <- substr(mergedat$snpid, 1, 3)
 #mergedat$SNP <- as.factor(ifelse(snpid == "0/0",0,1))

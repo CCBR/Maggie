@@ -1,0 +1,57 @@
+---
+title: "CCBR-485_ChipSeq"
+author: "Maggie Cam"
+date: "September 27, 2015"
+output: html_document
+---
+## **Background**
+Neuroblastoma (NB) is a rare childhood cancer affecting 10.2 cases per million children under 15 years of age in the United States. The median age at diagnosis is 17 months, being the most common cancer diagnosed in the first year of life.
+
+## **Data Processing**
+####*This part of the program was run on biowulf, and data transferred to a local directory*
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+
+library(Rsubread)
+library(limma)
+library(edgeR)
+library(Rsamtools)
+library(affy)
+library(csaw)
+```
+
+```{r, eval=FALSE}
+cat samples2.txt
+Jmjd3KO_H3K27_sorted.fastq.gz
+Jmjd3KO_H3K4_sorted.fastq.gz
+Jmjd3WT_H3K27_sorted.fastq.gz
+Jmjd3WT_H3K4_sorted.fastq.gz
+
+ref="/data/maggiec/RNASeq/Genomes/mm9/chr_all3.fa"
+buildindex(basename="reference_index",reference=ref)
+read1 = read.table("samples2.txt")
+align(index="reference_index",readfile1=read1)
+
+```
+
+####*Load data from local directory:*
+
+```{r}
+load("data/ChipSeq_092613.RData")
+load("data/newChip.RData")
+load("data/chip.RData")
+```
+
+####*Get Regions from +/- 2KB:*
+##> ls()
+##[1] "bam.files"    "prom_regions" "reg.counts"   "regions"      "targets" 
+
+```{r}
+targets
+regions=read.delim("data/mouse_prom_2000_rev.txt",header=FALSE,sep="\t")
+prom_regions=GRanges(regions$V2,IRanges(regions$V3,regions$V4))
+reg.counts<-regionCounts(bam.files,pet="none",prom_regions)
+
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
