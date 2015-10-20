@@ -1,0 +1,490 @@
+
+---
+title: "RNAseq in embryonic skin of Shh, fgf20, edar mutant mice"
+output:
+  html_document:
+    pandoc_args: [
+      "+RTS", "-K128m",
+      "-RTS"
+    ]
+---
+## *CCBR-620*
+### *Maggie Cam*
+### *Oct 15, 2015*
+
+## **Background**
+To detect different gene expression in a small subpopulation (<1%) of skin, call Merkel cell, upon shh, fgf20, and edar mutation. Aim to analyze the connection between the three different pathways, and try to get clue of the genes participating in Merkel cell development.
+
+E15.5 embryo skin from 2 mutant lines:
+ 
+edar mutant = mutation in gene ectodysplasin-A receptor, Single point mutation (Mutation details: This allele involves a G to A transition mutation at nucleotide 1,135 that causes the amino acid change: glutamate to lysine at position 379 (E379K). (J:56496))  
+                  phenotype (http://www.informatics.jax.org/allele/allgenoviews/MGI:1856018) = abnormal coat/hair morphology, darkened coat color  
+
+fgf20 mutant = fgf20-β-galactosidase knock-in allele
+                 phenotype= no guard hair in adult mouse back skin
+
+## **Data Processing**
+
+```{r setup, echo=FALSE, warning=FALSE}
+
+source("http://bioconductor.org/biocLite.R")
+#biocLite("edgeR")
+library(Rsubread)
+library(limma)
+library(edgeR)
+library(ggplot2)
+library(rgl)
+library(knitr)
+
+knit_hooks$set(rgl = function(before, options, envir) {
+  if (!before) {
+    ## after a chunk has been evaluated
+    if (rgl.cur() == 0) return()  # no active device
+    name = paste(options$fig.path, options$label, sep = '')
+    rgl.snapshot(paste(name, '.png', sep = ''), fmt = 'png')
+    return(paste('\\includegraphics{', name, '}\n', sep = ''))
+  }
+})
+
+knit_hooks$set(webgl = hook_webgl)
+```
+####*This part of the program was run on biowulf, and data transferred to a local directory*
+
+```{r, eval=FALSE}
+#Command line version
+module load subread
+x=$(ls *.bam)
+featureCounts -p -T 8 -s 2 -p -t exon -g gene_id -a /data/maggiec/RNASeq/Genomes/mm10/gencode.vM4.all.gtf -o counts_ss.txt $x
+
+#Used R version:
+gtf="data/maggiec/RNASeq/Genomes/mm10/gencode.vM4.all.gtf"
+targets <- readTargets()
+fc <- featureCounts(files=targets$bam,isGTFAnnotationFile=TRUE,nthreads=32,
+      annot.ext=gtf,GTF.attrType="gene_name",strandSpecific=2,isPairedEnd=TRUE)
+x <- DGEList(counts=fc$counts, genes=fc$annotation)
+
+```
+####*Load data from local directory:*
+
+```{r,eval=TRUE}
+setwd("/Users/maggiec/GitHub/Maggie/ccbr620/")
+load("data/ssData.RData")
+fc=fc_ss
+#load("data/RNASeqData.RData")
+ls()
+
+fc$stat
+fc1=mat=fc$counts
+tfc1=t(fc1)
+filter <- apply(fc1, 1, function(x) length(x[x>5])>=1)
+fc1filt <- fc1[filter,]
+genes <- rownames(fc1filt)
+
+```
+
+
+####*QC Check: Look at raw signal distribution and median expression levels*
+
+```{r fig.width=10, fig.height=5, echo=FALSE, warning=FALSE,message=FALSE}
+
+library(ggplot2)
+library(reshape)
+
+fc1filt=as.data.frame(fc1filt)
+fc1filtnames=sapply(strsplit(colnames(fc1filt),split="_"),function(x) x[2])
+fc1filtnames=sapply(strsplit(fc1filtnames,split="\\."),function(x) x[1])
+colnames(fc1filt)=paste(fc1filtnames,targets$Phenotype)
+
+df.m <- melt(as.data.frame(fc1filt))
+ggplot(df.m) + 
+  geom_density(aes(x = value, colour = variable)) + labs(x = NULL) +
+  theme(legend.position='right') + scale_x_log10() + ggtitle("Raw Counts")
+
+par(mar=c(10,7,1,1))
+boxplot(log(value)~variable,las=2,data=df.m,main="Raw Signal", 
+  	ylab="Counts",col=c(2,2,2,3,3,3))
+
+```
+
+####*Data is normalized by TMM and quantile normalization*
+
+```{r,fig.width=10, fig.height=5, echo=FALSE, warning=FALSE,message=FALSE}
+
+x <- DGEList(counts=fc$counts, genes=fc$annotation)
+isexpr <- rowSums(cpm(x)>0.5) >= 2
+hasannot <- rowSums(is.na(x$genes))==0
+x <- x[isexpr & hasannot,keep.lib.sizes=FALSE]
+
+#Number of filtered genes 
+dim(x)
+
+x <- calcNormFactors(x)
+
+par(mfrow=c(2,6))
+for (i in 1:dim(x)[2]){
+plotMD(cpm(x, log=TRUE), column=i)
+abline(h=0, col="red", lty=2, lwd=2)
+}
+
+id <- substring(targets$bam,8,10)
+
+```
+
+####*Run Voom*
+```{r}
+#Do analysis for entire group
+celltype <- factor(targets$Phenotype)
+Batch <- factor(targets$Batch)
+cell_rep=paste(celltype,Batch,sep=".")
+design <- model.matrix(~0+celltype)
+design
+v <- voom(x,design,plot=TRUE,normalize="quantile")
+```
+
+####*After Normalization*
+
+```{r, echo=FALSE,webgl=TRUE}
+
+colnames(v$E)=paste(fc1filtnames,targets$Phenotype)
+df.m <- melt(as.data.frame(v$E))
+
+ggplot(df.m) + 
+  geom_density(aes(x = value, colour = variable)) + labs(x = NULL) +
+  theme(legend.position='right') + ggtitle("Normalized Counts")
+
+par(mar=c(10,7,1,1))
+boxplot(value~variable,las=2,data=df.m,main="Normalized Signal", 
+  	ylab="Counts",col=c(2,2,2,3,3,3))
+
+edf=as.matrix(v$E)
+tedf= t(edf)
+pca=prcomp(tedf,scale.=T)
+tedf1 = data.frame(tedf)
+Phenotype=sapply(strsplit(targets$Phenotype,split=" "),function(x) x[1])
+cell_rep=paste(Phenotype,targets$Batch,sep=".")
+tedf1$group = as.factor(Phenotype)
+
+#plot(pca,type="lines")  #Decide how many PC's are relevant for plotting
+#pca$x[,1:3]  #look at first 3 PC's
+
+plot3d(pca$x[,1:3],col = as.integer(tedf1$group),type="s",size=2)
+group.v<-as.vector(cell_rep)
+text3d(pca$x, pca$y, pca$z, group.v, cex=1.0, adj = 1.2) 
+#rgl.postscript("pca3d_indiv.pdf","pdf")
+```
+
+####*Preprocessing of edar group (voom): 2 batches of pups (voom)*
+
+```{r, echo=FALSE, webgl=TRUE}
+targets[1:6,]
+celltype <- factor(targets$Phenotype[1:6])
+Batch <- factor(targets$Batch[1:6])
+cell_rep=paste(celltype,Batch,sep=".")
+design1 <- model.matrix(~Batch+celltype)
+design1
+v1 <- voom(x[,1:6],design1,plot=FALSE,normalize="quantile")
+
+edf=as.matrix(v$E[,1:6])
+tedf= t(edf)
+pca=prcomp(tedf,scale.=T)
+tedf1 = data.frame(tedf)
+
+Phenotype=sapply(strsplit(targets$Phenotype[1:6],split=" "),function(x) x[1])
+Batch=targets$Batch[1:6]
+tedf1$group = as.factor(Phenotype)
+#plot(pca,type="lines")  #Decide how many PC's are relevant for plotting
+#pca$x[,1:3]  #look at first 3 PC's
+
+plot3d(pca$x[,1:3],col = as.integer(tedf1$group),type="s",size=2)
+group.v<-as.vector(paste(Phenotype,Batch))
+text3d(pca$x, pca$y, pca$z, group.v, cex=1.0, adj = 1.2) 
+#rgl.postscript("pca3d_indiv_edar_batch.pdf","pdf")
+
+```
+
+####*Preprocessing of Fgf group (voom): 1 batch of pups*
+
+```{r, echo=FALSE, webgl=TRUE}
+#Process the Fgf group
+targets[7:12,]
+celltype <- factor(targets$Phenotype[7:12])
+design2 <- model.matrix(~celltype)
+design2
+v2 <- voom(x[,7:12],design2,plot=FALSE,normalize="quantile")
+
+#fgf:
+edf=as.matrix(v$E[,7:12])
+tedf= t(edf)
+pca=prcomp(tedf,scale.=T)
+tedf1 = data.frame(tedf)
+
+Phenotype=sapply(strsplit(targets$Phenotype[7:12],split=" "),function(x) x[1])
+tedf1$group = as.factor(Phenotype)
+#plot(pca,type="lines")  #Decide how many PC's are relevant for plotting
+#pca$x[,1:3]  #look at first 3 PC's
+
+plot3d(pca$x[,1:3],col = as.integer(tedf1$group),type="s",size=2)
+group.v<-as.vector(Phenotype)
+#group.split=strsplit(group.v,split="_")
+#group.v=sapply(group.split,function(x) x[1])
+text3d(pca$x, pca$y, pca$z, group.v, cex=1.0, adj = 1.2) 
+#rgl.postscript("pca3d_indiv_fgf.pdf","pdf")
+```
+
+####*Genes of Interest*
+
+```{r, fig.width=10, fig.height=5, warning=FALSE,echo=FALSE}
+
+genes=c("Sox2","Atoh1","Shh","Gli1","Edar","Traf6","Tnfrsf19","Lta","Ltb","Nfkb1")
+vdf=cbind(v1$E,v2$E)
+vdf=vdf[,c(1,2,3,4,5,6,7,8,10,9,11,12)]
+genes_count=vdf[rownames(vdf) %in% genes,]
+
+for (i in 1:length(genes)){
+gbar=vdf[rownames(vdf)==genes[i],]
+if(length(gbar)>0){
+names(gbar)=targets$Phenotype[match(names(gbar),targets$bam)]
+names(gbar)= sapply(strsplit(names(gbar),split=" "),function(x) x[1])
+groupcol=as.factor(names(gbar))
+barplot(2^gbar,col=as.numeric(groupcol), las = 2,main=paste(genes[i]," Counts: Normalized",sep=""),ylab="normalized cpm")
+}
+else {
+  paste(genes," is not present")
+}
+}
+
+
+```
+####*Statistical Analysis of Edar group (lmfit)*
+
+```{r}
+#Run analysis of edar group:
+fit1 <- lmFit(v1,design1) 
+fit1 <- eBayes(fit1) 
+options(digits=3) 
+topgenes1=topTable(fit1,coef=3,n=50,sort.by="p")
+FC = 2^(fit1$coefficients[,3])
+FC = ifelse(FC<1,-1/FC,FC)
+finalres=topTable(fit1,coef=3,sort="none",n=Inf)
+
+
+```
+
+
+####*Volcano Plot: Edar Group*
+
+
+```{r results='asis', tidy=FALSE,echo=FALSE}
+suppressPackageStartupMessages(library(googleVis))
+library(googleVis)
+
+op <- options(gvis.plot.tag='chart')
+volcano_data=as.data.frame(cbind(fit1$coefficients[,3],-1*log10(fit1$p.value[,3])))
+volcano_data$pop.html.tooltip=rownames(volcano_data)
+yval=ceiling(max(fit1$coefficients[,3]))
+Scatter <- gvisScatterChart(volcano_data, 
+          options=list(
+          tooltip="{isHtml:'True'}",
+          legend='none',
+          lineWidth=0, pointSize=1,
+          title='Edar mut vs het', vAxis="{title:'Log Odds'}",
+          hAxis="{title:'Log Fold Change'}", 
+          width=1200, height=800,
+          hAxes="[{viewWindowMode:'explicit', viewWindow:{min:-10, max:10}}]",
+          vAxes="[{viewWindowMode:'explicit', viewWindow:{min:0, max:5}}]"))
+plot(Scatter)
+
+```
+####*Heatmap: Edar Group Before and after Batch Removal*
+
+```{r, echo=FALSE}
+library(d3heatmap)
+#Original Heatmap (notice batch effect)
+topgenes_data=v1$E[rownames(v1$E) %in% rownames(topgenes1),]
+topgenes_data=topgenes_data[match(rownames(topgenes1),rownames(topgenes_data)),]
+colnames(topgenes_data)=targets$Phenotype[match(colnames(topgenes_data),targets$bam)]
+colnames(topgenes_data)= sapply(strsplit(colnames(topgenes_data),split=" "),function(x) x[1])
+colnames(topgenes_data)=paste(colnames(topgenes_data),targets$Batch[1:6])
+
+d3heatmap(topgenes_data, scale = "row", dendrogram = "none", main = "title",
+    color = "YlOrRd",cexRow=1,main="topgenes")
+
+v1res=(residuals.MArrayLM(fit1,v1)) # calculate residuals
+v1fit=(fitted.MArrayLM(fit1,design1)) # get fitted values
+v1coeff = fit1$coefficients
+#head(v1$E) # original = fitted + residuals
+
+#Remove batch effect 
+#targets
+w1=v1
+w1$E=v1$E
+w1$E[,2:5]=v1$E[,2:5]-v1coeff[,2]
+
+topgenes_data=w1$E[rownames(w1$E) %in% rownames(topgenes1),]
+topgenes_data=topgenes_data[match(rownames(topgenes1),rownames(topgenes_data)),]
+colnames(topgenes_data)=targets$Phenotype[match(colnames(topgenes_data),targets$bam)]
+colnames(topgenes_data)= sapply(strsplit(colnames(topgenes_data),split=" "),function(x) x[1])
+colnames(topgenes_data)=paste(colnames(topgenes_data),targets$Batch[1:6])
+d3heatmap(topgenes_data, scale = "row", dendrogram = "none",
+    color = "YlOrRd",cexRow=1,main="topgenes")
+
+genes_data=v1$E[rownames(v1$E) %in% genes,]
+colnames(genes_data)=targets$Phenotype[match(colnames(genes_data),targets$bam)]
+colnames(genes_data)= sapply(strsplit(colnames(genes_data),split=" "),function(x) x[1])
+d3heatmap(genes_data, scale = "row", dendrogram = "none", main="title",
+    color = "YlOrRd",cexRow=1)
+
+genes_data=w1$E[rownames(w1$E) %in% genes,]
+colnames(genes_data)=targets$Phenotype[match(colnames(genes_data),targets$bam)]
+colnames(genes_data)= sapply(strsplit(colnames(genes_data),split=" "),function(x) x[1])
+d3heatmap(genes_data, scale = "row", dendrogram = "none",
+    color = "YlOrRd",cexRow=1)
+```
+
+####*Barchart: Edar Group Before and after Batch Removal*
+
+```{r, echo=FALSE}
+
+vdf=cbind(v1$E,w1$E)
+genes_count=vdf[rownames(vdf) %in% genes,]
+
+for (i in 1:length(genes)){
+gbar=vdf[rownames(vdf)==genes[i],]
+if(length(gbar)>0){
+names(gbar)=targets$Phenotype[match(names(gbar),targets$bam)]
+names(gbar)= sapply(strsplit(names(gbar),split=" "),function(x) x[1])
+names(gbar)[7:12]=names(gbar)[1:6]
+groupcol=as.factor(names(gbar))
+colors = c("green", "orange", "green", "violet", "orange", "red", "pink", "cyan") 
+barplot(2^gbar,col=colors[as.numeric(groupcol)], las = 2,main=paste(genes[i]," Counts: Normalized",sep=""),ylab="normalized cpm")
+}
+else {
+  paste(genes," is not present")
+}
+}
+
+```
+
+
+####*PCA Plot: After Batch Removal*
+
+```{r, echo=FALSE,webgl=TRUE}
+edf=as.matrix(w1$E)
+tedf= t(edf)
+pca=prcomp(tedf,scale.=T)
+tedf1 = data.frame(tedf)
+
+Phenotype=sapply(strsplit(targets$Phenotype[1:6],split=" "),function(x) x[1])
+Batch=targets$Batch[1:6]
+tedf1$group = as.factor(Phenotype)
+#plot(pca,type="lines")  #Decide how many PC's are relevant for plotting
+#pca$x[,1:3]  #look at first 3 PC's
+
+plot3d(pca$x[,1:3],col = as.integer(tedf1$group),type="s",size=2)
+group.v<-as.vector(paste(Phenotype,Batch))
+text3d(pca$x, pca$y, pca$z, group.v, cex=1.0, adj = 1.2) 
+#rgl.postscript("pca3d_indiv_edar_batch.pdf","pdf")
+
+```
+
+```{r, echo=FALSE,eval=FALSE}
+
+finalres = cbind(w1$E,FC,finalres)
+datadir="/Users/maggiec/Github/Maggie/ccbr620/Results"
+setwd(datadir)
+write.table(finalres,file="Gencode_FCpval_edar.txt",
+      row.names=TRUE,col.names=TRUE,sep="\t",quote=FALSE)
+
+```
+
+###*Statistical Analysis of Fgf group*
+
+```{r}
+
+design2 <- model.matrix(~celltype)
+fit2 <- lmFit(v2,design2) 
+fit2 <- eBayes(fit2) 
+options(digits=3) 
+topgenes2=topTable(fit2,coef=2,n=50,sort.by="p")
+finalres2=topTable(fit2,coef=2,sort="none",n=Inf)
+
+FC2 = 2^(fit2$coefficients[,2])
+FC2 = ifelse(FC2<1,-1/FC2,FC2)
+
+```
+
+```{r, echo=FALSE,eval=FALSE}
+finalres2 = cbind(v2$E,FC2,finalres2)
+datadir="/Users/maggiec/GitHub/Maggie/ccbr620/Results"
+setwd(datadir)
+write.table(finalres2,file="Gencode_FCpval_Fgf.txt",
+      row.names=TRUE,col.names=TRUE,sep="\t",quote=FALSE)
+
+```
+
+####*Volcano Plot: Fgf Group*
+
+```{r results='asis', tidy=FALSE,echo=FALSE}
+suppressPackageStartupMessages(library(googleVis))
+library(googleVis)
+
+op <- options(gvis.plot.tag='chart')
+volcano_data=as.data.frame(cbind(fit2$coefficients[,2],-1*log10(fit2$p.value[,2])))
+volcano_data$pop.html.tooltip=rownames(volcano_data)
+yval=ceiling(max(fit2$coefficients[,2]))
+Scatter <- gvisScatterChart(volcano_data, 
+          options=list(
+          tooltip="{isHtml:'True'}",
+          legend='none',
+          lineWidth=0, pointSize=1,
+          title='Fgf mut vs het', vAxis="{title:'Log Odds'}",
+          hAxis="{title:'Log Fold Change'}", 
+          width=1200, height=800,
+          hAxes="[{viewWindowMode:'explicit', viewWindow:{min:-10, max:10}}]",
+          vAxes="[{viewWindowMode:'explicit', viewWindow:{min:0, max:5}}]"))
+plot(Scatter)
+
+```
+
+####*Heatmap: Fgf Group*
+
+```{r, echo=FALSE}
+library(d3heatmap)
+#Original Heatmap (notice batch effect)
+w2=v2
+w2$E=v2$E[,c(1,2,4,3,5,6)]
+topgenes_data2=w2$E[rownames(w2$E) %in% rownames(topgenes2),]
+topgenes_data2=topgenes_data2[match(rownames(topgenes_data2),rownames(topgenes2)),]
+colnames(topgenes_data2)=targets$Phenotype[match(colnames(topgenes_data2),targets$bam)]
+colnames(topgenes_data2)= sapply(strsplit(colnames(topgenes_data2),split=" "),function(x) x[1])
+colnames(topgenes_data2)=paste(colnames(topgenes_data2),targets$Batch[7:12])
+
+d3heatmap(topgenes_data2, scale = "row", dendrogram = "none", main = "title",
+    color = "YlOrRd",cexRow=1,main="topgenes")
+
+genes_data=w2$E[rownames(w2$E) %in% genes,]
+colnames(genes_data)=targets$Phenotype[match(colnames(genes_data),targets$bam)]
+colnames(genes_data)= sapply(strsplit(colnames(genes_data),split=" "),function(x) x[1])
+d3heatmap(genes_data, scale = "row", dendrogram = "none", main="title",
+    color = "YlOrRd",cexRow=1)
+```
+
+####*Boxplots: Fgf Group*
+
+```{r,echo=FALSE}
+vdf=w2$E
+for (i in 1:length(genes)){
+gbar=vdf[rownames(vdf)==genes[i],]
+if(length(gbar)>0){
+names(gbar)=targets$Phenotype[match(names(gbar),targets$bam)]
+names(gbar)= sapply(strsplit(names(gbar),split=" "),function(x) x[1])
+groupcol=as.factor(names(gbar))
+colors = c("blue", "yellow", "green", "violet", "orange", "red", "pink", "cyan") 
+barplot(2^gbar,col=colors[as.numeric(groupcol)], las = 2,main=paste(genes[i]," Counts: Normalized",sep=""),ylab="normalized cpm")
+}
+else {
+  paste(genes," is not present")
+}
+}
+
+```

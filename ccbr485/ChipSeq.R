@@ -7,7 +7,10 @@ library(Rsubread)
 library(limma)
 library(edgeR)
 library(Rsamtools)
+library(affy)
+library(GenomicRanges)
 
+setwd("/Users/maggiec/GitHub/Maggie/ccbr485/")
 setwd("/Volumes/data/ChipSeq/fastq")
 load("/Volumes/data/ChipSeq/fastq/ChipSeq_092613.RData")
 
@@ -354,7 +357,6 @@ colnames(results$offset) = paste(targets$Bam,"offsets",sep="_")
 
 finalresults<-cbind(names(prom_regions),regions$V6,results$fitted.values,results$table,y$counts,results$offset)
 write.table(finalresults,"ChipSeq_results_2000.txt",quote=FALSE,row.names=FALSE,col.names=TRUE,sep="\t")
-
 
 
 ####Final Analysis for all H3K27me3 files#####
