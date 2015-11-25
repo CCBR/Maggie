@@ -1,5 +1,7 @@
 Ghany
 
+source("https://bioconductor.org/biocLite.R")
+
 ### Run in Biowulf ################
 library(affy)
 library(oligo)
@@ -14,6 +16,8 @@ setwd("/data/CCBR/projects/ccbr601/Niddk4MGHany-5-6-15/04-24-14-MGhany_HA-HuGene
 
 setwd("/Volumes/CCBR/projects/ccbr601/Niddk4MGHany-5-6-15/04-24-14-MGhany_HA-HuGene2_ST/")
 setwd("/Users//maggiec//Documents/Ghany/")
+
+setwd("/Users/maggiec/GitHub/Maggie/ccbr601/data")
 load(".RData")
 
 celFiles=read.table("covdesc2",header=TRUE,fill=TRUE)[,1]
@@ -708,9 +712,10 @@ head(finalres2[order(finalres3[,6],finalres3[,2],decreasing=FALSE),])
 
 ############  4) Look at Gt1b only ###################################
 
+
 dim(tedf2[tedf2$Treatment.Group=="Gt1b",] )
 [1]    22 53625
-
+dim(Gt1b)
 Gt1b=tedf2[tedf2$Treatment.Group=="Gt1b",]
 Gt1b <- Gt1b[ ,c(1:5,53623:53625,6:53622)]
 Gt1b[,1:8]
@@ -738,25 +743,96 @@ table(Patient,Treatment)
 2783       1         1
 2957       1         1
 
-design <- model.matrix(~Patient+Treatment) 
+#design <- model.matrix(~Patient+Treatment) 
 Gt1b.mat=t(as.matrix(Gt1b[, 9:53625]))
-fit <- lmFit(Gt1b.mat, design) 
-fit <- eBayes(fit) 
-topTable(fit, coef="TreatmentUntreated")  
-finalres=topTable(fit,coef="TreatmentUntreated",sort="none",n=Inf)
 
-FC = 2^finalres[,1]
-FC = 1/FC
+#######PCA Plot #################
+
+colnames(Gt1b.mat)=paste(Gt1b$Patient,Gt1b$Treatment.Time,Gt1b$Failed,sep=".")
+Treatment <- relevel(Treatment, ref="Untreated")
+design <- model.matrix(~0+Treatment) 
+
+corfit <- duplicateCorrelation(Gt1b.mat,design,block=Gt1b$Patient.ID)
+corfit$consensus
+fit <- lmFit(Gt1b.mat,design,block=Gt1b$Patient.ID,correlation=corfit$consensus)
+
+#fit <- lmFit(Gt1b, design) 
+#fit <- eBayes(fit) 
+#topTable(fit, coef="TreatmentUntreated")  
+#finalres=topTable(fit,coef="TreatmentUntreated",sort="none",n=Inf)
+
+cm <- makeContrasts(Treatment = TreatmentTreated-TreatmentUntreated,
+                    levels=design) 
+fit2 <- contrasts.fit(fit, cm)
+fit2 <- eBayes(fit2)
+topTable(fit2, coef=1)
+volcanoplot(fit2,coef=1)
+finalres=topTable(fit2,sort="none",n=Inf)
+
+FC = 2^(fit2$coefficients)
 FC = ifelse(FC<1,-1/FC,FC)
+colnames(FC)=paste(colnames(fit2$coefficient),"FC",sep="_")
+pval=fit2$p.value
+colnames(pval)=paste(colnames(fit2$p.value),"pval",sep="_")
 
-finalres = as.data.frame(cbind(FC,finalres))
+finalres = as.data.frame(cbind(Gt1b.mat,FC,pval,finalres))
 
 dim(finalres)
+head(finalres)
+
+#key=keys(hugene20stprobeset.db) #probe level
+key=keys(hugene20sttranscriptcluster.db) #Probeset level
+annot = AnnotationDbi::select(hugene20sttranscriptcluster.db, keys=key, 
+                              columns=c("SYMBOL","REFSEQ","GENENAME"),keytype="PROBEID")
+annot=annot[!duplicated(annot$PROBEID), ]
+
+finalres$ID = rownames(finalres)
+colnames(annot) = c("PROBEID","SYMBOL","REFSEQ","GENE")
+
+finalres5 = merge(finalres,annot,by.x="ID",by.y="PROBEID") #Gt1b
+write.table(finalres5,file="all_results_Gt1b.txt",row.names=FALSE,sep="\t",quote=FALSE)
+
+####Heatmap of all genes differentially expressed ###########
+#Global heat map of all ISGs (2000 of them? Though 469 were differentially expressed)
+
+head(finalres5)
+finalres5_filt=filter(finalres5,abs(Treatment_FC) >= 1.2,Treatment_pval<=0.01,SYMBOL != "NA")
+finalres5_filt=arrange(finalres5_filt,Treatment_pval)
+finalres5_filt=finalres5_filt[!duplicated(finalres5_filt$SYMBOL), ]
+dim(finalres5_filt)
+[1] 386  12
+head(finalres5_filt)
+colnames(finalres5_filt)
+finalres_heat=finalres5_filt[,c(2:23)]
+colnames(finalres_heat)=paste(Gt1b$Treatment.Time,Gt1b$Failed,sep=".")
+rownames(finalres_heat)=finalres5_filt$SYMBOL
+
+palette <- colorRampPalette(c('blue','red'))(12)
+palette2 <- c('green','yellow','red','blue')
+
+palette
+color=as.numeric(as.factor(colnames(finalres_heat)))
+f.patient=as.factor(colnames(finalres_heat))
+
+hc.rows <- hclust(dist(finalres_heat))
+
+heatmap(as.matrix(finalres_heat), 
+        ColSideColors = palette2[color],
+        col=palette, labCol= NA, labRow=NA,
+        Rowv=as.dendrogram(hc.rows),
+        #Colv = NA)
+        Colv=as.dendrogram(hclust(dist(t(finalres_heat)),
+              method="average")))
+
+legend("topright",legend=levels(f.patient), fill=palette2,title="Group",
+       cex=0.8)
 
 ##########  Look at Treatment Failure within Gt1b ############
+
+
 dim(Gt1b)
-Gt1b <- Gt1b[ ,c(1:5,53623:53625,6:53622)]
 Gt1b[1:10,1:10]
+#Gt1b <- Gt1b[ ,c(1:5,53623:53625,6:53622)]
 Gt1b$Failed[Gt1b$Failed=="1"]="Failed"
 Gt1b$Failed[Gt1b$Failed=="0"]="Success"
 Gt1b_Tx=Gt1b[Gt1b$Treatment.Time=="Treated",]
@@ -791,9 +867,11 @@ cm <- makeContrasts(FailedvsSuccessUntreated = Failed.Untreated-Success.Untreate
                     levels=design) 
 fit2 <- contrasts.fit(fit, cm)
 fit2 <- eBayes(fit2)
-topTable(fit2, coef="TreatedvsUntreatedForSuccess")
-
+topTable(fit2, coef="FailedvsSuccessUntreated")
+volcanoplot(fit2,coef=1)
 finalres=topTable(fit2,sort="none",n=Inf)
+
+
 
 results <- decideTests(fit2,adjust.method="none",p.value=0.05,lfc=0.58)
 vennDiagram(results[,1:2],include=c("up","down"),
@@ -801,7 +879,7 @@ vennDiagram(results[,1:2],include=c("up","down"),
 vennDiagram(results[,3:4],include=c("up","down"),
             counts.col=c("red","green"),cex=1.0)
 
-FC = 2^finalres[,1:4]
+FC = 2^(fit2$coefficients[,1:4])
 FC = ifelse(FC<1,-1/FC,FC)
 colnames(FC)=paste(colnames(FC),"FC",sep="_")
 pvalall=fit2$p.value
@@ -815,7 +893,8 @@ pvaladjall=cbind(FailedvsSuccessUntreated_pval,FailedvsSuccessForTreated,
                  TreatedvsUntreatedForSuccess,TreatedvsUntreatedForFailed)
 colnames(pvaladjall)=paste(colnames(pvaladjall),"adjpval",sep="_")
 
-finalres = as.data.frame(cbind(FC,pvalall,pvaladjall))
+colnames(Gt1b.mat)=paste(Failure,Gt1b$Patient.ID,sep=".")
+finalres = as.data.frame(cbind(Gt1b.mat,FC,pvalall,pvaladjall))
 
 FailedvsSuccessUntx=finalres[(finalres[,1]>=1.2 | finalres[,1]<=-1.2) && finalres[,3] < 0.1]
 
@@ -826,12 +905,8 @@ TxvsUntx_Success=finalres[((finalres$TreatedvsUntreatedForSuccess_FC>=1.2 |
 
 TxvsUntx_Failed=finalres[((finalres[,4]>=1.2 | finalres[,4]<=-1.2) & finalres[,8] < 0.1),]
 
-
-
 dim(finalres)
-
-
-
+[1] 53617    34
 
 
 ######### Draw PCA Plot ###############
@@ -841,15 +916,19 @@ load("Gt1a.RData")
 
 Gt1b.mat2=(as.matrix(Gt1b[, 9:53625]))
 pca=prcomp(Gt1b.mat2)
-Treat <- factor(paste(Gt1b$Cirrhosis.Group,Gt1b$Treatment.Time,sep=".")) 
-
+#Treat <- factor(paste(Gt1b$Cirrhosis.Group,Gt1b$Treatment.Time,sep=".")) 
+plot(pca,type="lines")  #Decide how many PC's are relevant for plotting
+pca$x[,1:3] 
+plot(pca,type="lines") 
+cell_rep=paste(Patient,Treatment,Failure,sep=".")
+#cell_rep=paste(Phenotype,Failure,Treatment,sep=".")
 library(rgl)
 open3d() 
-
-plot3d(pca$x[,1:3],col=as.numeric(as.factor(Failure)), 
+Gt1b.mat2$group = as.factor(Patient)
+plot3d(pca$x[,1:3],col=as.integer(Gt1b.mat2$group), 
        type="s",size=2)
-group.v<-as.vector(Failure)
-text3d(pca$x, pca$y, pca$z, group.v, cex=0.6, adj = 1) 
+group.v<-as.vector(cell_rep)
+text3d(pca$x, pca$y, pca$z, group.v, cex=0.6, adj = 1.5) 
 rgl.postscript("pca3d_Gt1ab.pdf","pdf")
 
 ####### Volcano Plot ################
@@ -895,14 +974,186 @@ colnames(annot) = c("PROBEID","SYMBOL","REFSEQ","GENE")
 finalres6 = merge(finalres,annot,by.x="ID",by.y="PROBEID") #Gt1b
 write.table(finalres6,file="failvsnonfail_results_Gt1b.txt",row.names=FALSE,sep="\t",quote=FALSE)
 
+###### Look at ISG Expression in Gt1b ######
+
+ISG=c("ACADSB","ACSM2A","ACSM3","ADH6","ADIPOQ","ANXA9","APOA5",
+      "APOF","BDH1","CCL19","CCL2","CCL20","CCL4","CRIP1","CXCL10",
+      "CXCL11","CXCL9","CYP1A1","CYP4A11","DDX58","DDX60","EIF2AK2",
+      "FCGR1A","FDPS","HCP5","HERC5","HMGCS2","IFI27","IFI35","IFI44L",
+      "IFI6","IFIH1","IFIT1","IFIT2","IFIT3","IFITM1","IRF9","ISG15",
+      "ISG20","LCAT","LEP","LGALS3","LIPC","LSS","MUC13","MX1","MX2",
+      "NPC1L1","OAS1","OAS2","OAS3","OASL","PLSCR1","PPARA","PRKAB2",
+      "RSAD2","SLFN5","STAT1","TAP1","UBE2L6","XAF1")
+
+ISG46=c("CXCL10","CXCL9","CXCL11","CCL4","CCL2","CCL19","CCL20","TAP1",
+        "OASL","ISG15","MX1","OAS3","OAS2","IFIT1","IFIT3","STAT1","OAS1",
+        "IFIT2","IFITM1","ISG20","BDH1","PRKAB2","CYP4A11","HMGCS2","PPARA",
+        "APOA5","CYP1A1","ACADSB","ADH6","ANXA9","ACSM3","LIPC","NPC1L1","FDPS",
+        "LSS","LCAT","APOF","DDX60","PLSCR1","EIF2AK2","IRF9","IFI6","IFI44L",
+        "IFI27","IFIH1","DDX58","RSAD2")
+
+#ISG=c("FCGR1B","ADIPOQ","RSAD2")
+#ISG=c("CXCL10","CXCL11","RSAD2")
+
+ISG_annotsub=subset(annot,annot$SYMBOL %in% ISG46 == TRUE)
+ISG_sub=Gt1b[,match(ISG_annotsub$PROBEID,colnames(Gt1b))]
+
+ISG_sub=cbind(Gt1b[,1:8],ISG_sub)
+colnames(ISG_sub)=ISG_annotsub$SYMBOL[match(colnames(ISG_sub),ISG_annotsub$PROBEID)]
+names(ISG_sub)[1:8] <- names(Gt1b)[1:8]
+dim(ISG_sub)
+[1] 22 62
+numcol=dim(ISG_sub)[2]
+
+FC.df=data.frame(matrix(ncol = numcol, nrow = 11))
+colnames(FC.df)=colnames(ISG_sub)
+
+for (i in 0:10){
+  j=i*2+1
+  k=j+1
+  l=i+1
+  FC.df[l,1:8]=ISG_sub[k,1:8]
+  FC.df[l,9:numcol]=ISG_sub[k,9:numcol]-ISG_sub[j,9:numcol]
+}
+
+library(ggplot2)
+# Use single fill color
+
+length = dim(ISG_sub)[2]-8
+for(i in 1:length){
+  j=i+8
+  filename=paste(names(ISG_sub)[j],"_",i,sep="")
+  #png(paste(filename,"png",sep="."))
+  ymin=floor(min(ISG_sub[,j]))
+  ymax=ceiling(max(ISG_sub[,j]))
+  size=(ymax-ymin)*0.05
+plots=ggplot(ISG_sub, aes(x=Treatment, y=ISG_sub[,j], fill=Failed)) + 
+  geom_dotplot(binaxis='y', stackdir='center',binwidth = size) +
+  ylab(names(ISG_sub)[j]) + ylim(c(ymin,ymax)) + theme_bw()  
+ggsave(plots,filename=paste(filename,"png",sep="."))
+dev.off()
+}
+
+length = dim(FC.df)[2]-8
+for(i in 1:length){
+  j=i+8
+  filename=paste(names(FC.df)[j],"_FC_",i,sep="")
+  #png(paste(filename,"png",sep="."))
+  ymin=floor(min(FC.df[,j]))
+  ymax=ceiling(max(FC.df[,j]))
+  size=(ymax-ymin)*0.05
+  plots=ggplot(FC.df, aes(x=Failed, y=FC.df[,j], fill=Failed)) + 
+    geom_boxplot(notch = FALSE) +
+    geom_dotplot(binaxis='y', stackdir='center',binwidth = size) +
+    ylab(names(FC.df)[j]) + ylim(c(ymin,ymax)) + theme_bw()  
+  ggsave(plots,filename=paste(filename,"png",sep="."))
+  dev.off()
+}
+
+save.image()
+
+#########Draw heatmap #######
+#source_url("https://raw.githubusercontent.com/obigriffith/biostar-tutorials/master/Heatmaps/heatmap.3.R")
+
+#limit to highest gene signal 
+tISG_sub=t(ISG_sub)
+
+colnames(tISG_sub)=paste(tISG_sub["Failed",],tISG_sub["Treatment.Time",],
+                         sep=".")
+colnames(tISG_sub)
+
+#Filter more
+myvars <- colnames(tISG_sub) %in% c("Success.Treated","Failed.Treated")
+colnames(tISG_sub[,!myvars])
+tISG_sub <- tISG_sub[,!myvars] 
+
+dim(tISG_sub)
+[1] 65 22
+
+tISG_sub[1:14,]
+tISG_sub.mat=as.matrix(tISG_sub[9:dim(tISG_sub)[1],])
+rownames(tISG_sub.mat)=rownames(tISG_sub[9:dim(tISG_sub)[1],])
+class(tISG_sub.mat) <- "numeric"
+tISG_sub.mat <- cbind(tISG_sub.mat,apply(tISG_sub.mat,1,mean))
+dim(tISG_sub.mat)
+[1] 73 23
+
+dimnames(tISG_sub.mat)[[2]][12]<- "Avg"
+dimnames(tISG_sub.mat)[[2]][23]<- "Avg" # For unfiltered
+head(tISG_sub.mat)
+tISG_sub.mat.ordered=tISG_sub.mat[order(tISG_sub.mat[,23]),] 
+tISG_sub.mat.unique=unique(tISG_sub.mat.ordered,fromLast=TRUE)
+tISG_sub.mat.unique.scale=tISG_sub.mat.unique[,1:22]
+hc.rows <- hclust(dist(tISG_sub.mat.unique.scale))
+
+save.image()
+palette <- colorRampPalette(c('blue','red'))(12)
+palette2 <- c('green','orange','red','blue')
+
+palette
+color=as.numeric(as.factor(colnames(tISG_sub.mat.unique.scale)))
+f.patient=as.factor(colnames(tISG_sub.mat.unique.scale))
+
+heatmap(tISG_sub.mat.unique.scale, 
+    ColSideColors = palette2[color],
+    col=palette, labCol= NA,
+    Rowv=as.dendrogram(hc.rows),
+    #Colv = NA)
+    Colv=as.dendrogram(hclust(dist(t(tISG_sub.mat.unique[,1:22]),)),
+                       method="average"))
+
+legend("topright",legend=levels(f.patient), fill=palette2,title="Group",
+       cex=0.8)
+
+#######Heatmap of all genes ########
+
+#limit to highest gene signal
+
+colnames(Gt1b)=annot$SYMBOL[match(colnames(Gt1b),annot$PROBEID)]
+Gt1b_sub=Gt1b[(colnames(Gt1b) != "NA")==TRUE,]
+dim(Gt1b_sub)
+tGt1b_sub=t(Gt1b_sub)
+colnames(tISG_sub)=paste(tISG_sub["Failed",],tISG_sub["Treatment.Time",],
+                         sep=".")
+tISG_sub.mat=as.matrix(tISG_sub[9:dim(tISG_sub)[1],])
+rownames(tISG_sub.mat)=rownames(tISG_sub[9:dim(tISG_sub)[1],])
+class(tISG_sub.mat) <- "numeric"
+tISG_sub.mat <- cbind(tISG_sub.mat,apply(tISG_sub.mat,1,mean))
+dim(tISG_sub.mat)
+[1] 73 23
+dimnames(tISG_sub.mat)[[2]][23]<- "Avg"
+head(tISG_sub.mat)
+tISG_sub.mat.ordered=tISG_sub.mat[order(tISG_sub.mat[,23]),] 
+tISG_sub.mat.unique=unique(tISG_sub.mat.ordered,fromLast=TRUE)
+tISG_sub.mat.unique.scale=tISG_sub.mat.unique[,1:22]
+hc.rows <- hclust(dist(tISG_sub.mat.unique.scale))
+
+save.image()
+palette <- colorRampPalette(c('red','blue'))(12)
+palette2 <- c('red','blue','green','yellow')
+
+palette
+color=as.numeric(as.factor(colnames(tISG_sub.mat.unique.scale)))
+f.patient=as.factor(colnames(tISG_sub.mat.unique.scale))
+
+heatmap(tISG_sub.mat.unique.scale, 
+        ColSideColors = palette2[color],
+        col=palette, labCol= NA,
+        Rowv=as.dendrogram(hc.rows),
+        #Colv = NA)
+        Colv=as.dendrogram(hclust(dist(t(tISG_sub.mat.unique[,1:22])))))
+
+legend("topright",legend=levels(f.patient), fill=palette2,title="Group",
+       cex=0.7)
+
 
 ################Re-do finalres6 - just treated vs untreated################
 
-colnames(finalres6)
+colnames(finalres5)
 [1] "ID"        "FC"        "logFC"     "AveExpr"   "t"         "P.Value"   "adj.P.Val"
 [8] "B"         "PROBEID"   "SYMBOL"    "REFSEQ"    "GENE"  
 
-write.table(finalres6,file="all_results_Gt1b.txt",row.names=FALSE,sep="\t",quote=FALSE)
+write.table(finalres5,file="all_results_Gt1b.txt",row.names=FALSE,sep="\t",quote=FALSE)
 
 
 #########################
@@ -1329,4 +1580,520 @@ group.v<-as.vector(TreatVirus)
 text3d(pca$x, pca$y, pca$z, group.v, cex=0.6, adj = 1) 
 rgl.postscript("figures/pca3d_Gt1b_TreatVirus.pdf","pdf")
 
-###
+#####miRNA Analysis ##################
+
+#Global miRNA heatmap
+
+#Pathway for miRNAs
+
+miRdat=read.csv("miR_rawdata.txt",sep="\t",header = TRUE)
+Pheno=read.csv("miR_Pheno.txt",sep="\t",strip.white = TRUE,header=TRUE)
+
+negs=miRdat[miRdat$Class.Name=="Negative",4:21]
+negMean=colMeans(negs)
+meannegMean=mean(negMean)
+meannegMean=meannegMean+2*sd(negMean)
+
+tmiRdat = t(miRdat)
+
+dim(tmiRdat)
+dimnames(tmiRdat)[[2]]<-tmiRdat[1,]
+
+myval= tmiRdat[3,] == "Endogenous1"
+tmiRdat_sub=tmiRdat[,myval==TRUE]
+
+tmiRdat_sub=as.data.frame(tmiRdat_sub[4:21,])
+tmiRdat_sub$name=rownames(tmiRdat_sub)
+i <- sapply(Pheno, is.factor)
+Pheno[i] <- lapply(Pheno[i], as.character)
+
+tmiRdat_sub_merge=merge(Pheno,tmiRdat_sub,
+      by.x="Sample",by.y="name")
+dim(tmiRdat_sub_merge)
+tmiRdat_sub_merge$SampleID=paste(tmiRdat_sub_merge$Patient_ID,
+  tmiRdat_sub_merge$Response,tmiRdat_sub_merge$Treatment,sep=".")
+
+tmiRdat_sub_merge.mat=t(tmiRdat_sub_merge[,6:803])
+class(tmiRdat_sub_merge.mat) <- "numeric"
+filter <- apply(tmiRdat_sub_merge.mat, 1, function(x) length(x[x>meannegMean])>=2)
+tmiRdat_sub_merge.mat.filt <- tmiRdat_sub_merge.mat[filter,]
+dim(tmiRdat_sub_merge.mat.filt)
+[1] 301  18
+
+#Draw density plot
+
+miRdat_sub_merge=tmiRdat_sub_merge.mat.filt 
+head(miRdat_sub_merge)
+dimnames(miRdat_sub_merge)[[2]] <- tmiRdat_sub_merge[,804]
+class(miRdat_sub_merge) <- "numeric"
+miRdat_sub_merge=log(miRdat_sub_merge,2)
+miRdat_sub_merge_norm=normalizeQuantiles(miRdat_sub_merge)
+
+#miRdat_sub_merge_norm=normalizeMedianValues(miRdat_sub_merge)
+
+df.m <- melt.data.frame(as.data.frame(miRdat_sub_merge_norm))
+
+ggplot(df.m) + 
+  geom_density(aes(x = value, colour = variable)) + labs(x = NULL) +
+  theme(legend.position='right') + scale_x_log10() + ggtitle("Raw Counts")
+
+par(mar=c(10,7,1,1))
+boxplot(log(value)~variable,las=2,data=df.m,main="Raw Signal", 
+        ylab="Counts",col=c(2,2,3,3,4,4))
+
+
+Treatment=as.factor(tmiRdat_sub_merge$Treatment)
+#Cirrhosis.Group.Gt1b=as.factor(Gt1b$Cirrhosis.Group)
+#table(Treatment.Time.Gt1b,Cirrhosis.Group.Gt1b)
+Patient <- factor(tmiRdat_sub_merge$Patient_ID) 
+
+table(Patient,Treatment)
+
+#Treatment
+#Patient Treated Untreated
+110        1         1
+814        1         1
+975        1         1
+1154       1         1
+1230       1         1
+1505       1         1
+2168       1         1
+2783       1         1
+2957       1         1
+
+
+Failure=as.factor(tmiRdat_sub_merge$Response)
+table(Treatment,Failure)
+Failure
+Treatment   NR R
+Treated    3 6
+Untreated  3 6
+
+Treatment.Fail=as.factor(paste(Failure,Treatment,sep="."))
+
+Treatment.Fail
+[1] R.Untreated  R.Treated    R.Untreated  R.Treated    R.Untreated  R.Treated    R.Untreated 
+[8] R.Treated    NR.Treated   NR.Untreated R.Treated    R.Untreated  NR.Treated   NR.Untreated
+[15] R.Untreated  R.Treated    NR.Untreated NR.Treated  
+Levels: NR.Treated NR.Untreated R.Treated R.Untreated
+
+tedf= t(miRdat_sub_merge_norm)
+pca=prcomp(tedf,scale.=T)
+tedf1 = data.frame(tedf)
+Phenotype=Patient
+Phenotype=Treatment.Fail
+plot(pca,type="lines")  #Decide how many PC's are relevant for plotting
+pca$x[,1:3] 
+
+Pheno$Treatment
+cell_rep=paste(Phenotype,Patient,sep=".")
+cell_rep=paste(Phenotype,Failure,Treatment,sep=".")
+tedf1$group = as.factor(Patient)
+plot3d(pca$x[,1:3],col = as.integer(tedf1$group),type="s",size=2)
+group.v<-as.vector(cell_rep)
+text3d(pca$x[,1:3], pca$y, pca$z, group.v, cex=1.0, adj = 1.2) 
+rgl.postscript("pca3d_miR.pdf","pdf")
+
+
+#design <- model.matrix(~Patient+Treatment) 
+
+dim(miRdat_sub_merge_norm)
+#tmiRdat_sub_merge.mat=t(as.matrix(tmiRdat_sub_merge[, 6:803]))
+#dim(tmiRdat_sub_merge.mat)
+[1] 332  18
+[1] 404  18  # Second try - used a less stringent negative control threshold
+
+class(tmiRdat_sub_merge.mat) <- "numeric"
+
+
+design <- model.matrix(~0+Treatment.Fail) 
+colnames(design)=levels(Treatment.Fail)
+corfit <- duplicateCorrelation(miRdat_sub_merge_norm,design,
+                               block=tmiRdat_sub_merge$Patient_ID)
+corfit$consensus
+fit <- lmFit(miRdat_sub_merge_norm,design,
+            block=tmiRdat_sub_merge$Patient_ID,
+            correlation=corfit$consensus)
+
+
+cm <- makeContrasts(NRvsR.Untreated = NR.Untreated-R.Untreated,
+                    NRvsR.Treated = NR.Treated-R.Treated,
+                    NR.TreatedvsUntreated = NR.Treated-NR.Untreated,
+                    R.TreatedvsUntreated = R.Treated-R.Untreated,
+                    levels=design) 
+fit2 <- contrasts.fit(fit, cm)
+fit2 <- eBayes(fit2)
+topTable(fit2, coef="R.TreatedvsUntreated")
+volcanoplot(fit2,coef="R.TreatedvsUntreated")
+finalresmir=topTable(fit2,sort="none",n=Inf)
+
+FC = 2^(fit2$coefficients)
+FC = ifelse(FC<1,-1/FC,FC)
+colnames(FC)=paste(colnames(FC),"FC",sep="_")
+pvalall=fit2$p.value
+colnames(pvalall)=paste(colnames(pvalall),"pval",sep="_")
+
+
+miR_select=c("hsa-miR-3144-5p","hsa-miR-543","hsa-miR-149-5p","hsa-miR-654-5p","hsa-miR-539-5p","hsa-miR-375","hsa-miR-147a","hsa-miR-140-3p","hsa-miR-193a-3p","hsa-miR-548q","hsa-miR-423-3p","hsa-miR-2682-5p","hsa-miR-107","hsa-miR-199b-5p","hsa-miR-575","hsa-miR-9-5p","hsa-miR-4286","hsa-miR-455-3p","hsa-miR-513a-5p","hsa-miR-874-3p","hsa-miR-185-5p","hsa-miR-135b-5p","hsa-miR-423-5p","hsa-miR-99b-5p","hsa-miR-520f-3p","hsa-miR-497-5p","hsa-miR-331-3p","hsa-miR-210-3p","hsa-miR-4536-5p","hsa-miR-642a-5p","hsa-miR-24-3p","hsa-miR-483-3p","hsa-miR-93-5p","hsa-miR-22-3p","hsa-miR-28-5p")
+miR_select_D=c("hsa-miR-140-3p","hsa-miR-2682-5p","hsa-miR-199b-5p","hsa-miR-455-3p","hsa-miR-513a-5p","hsa-miR-185-5p")
+finalresmir=cbind(FC,pvalall,finalresmir)
+write.table(finalresmir,file="finalres_mir_FC.txt",col.names = TRUE,
+            row.names = TRUE, sep = "\t")
+
+
+NR.TxvsUntx=rownames(finalresmir[finalresmir$NR.TreatedvsUntreated_pval<0.05 & finalresmir$NR.TreatedvsUntreated_FC>0,])
+R.TxvsUntx=rownames(finalresmir[finalresmir$R.TreatedvsUntreated_pval<0.05 & finalresmir$R.TreatedvsUntreated_FC>0,])
+NRvsR.Tx=rownames(finalresmir[finalresmir$R.TreatedvsUntreated_pval<0.05 & finalresmir$NR.TreatedvsUntreated_FC>0,])
+NRvsR.Untx=rownames(finalresmir[finalresmir$NRvsR.Untreated_pval<0.05 & finalresmir$NRvsR.Untreated_FC>0,])
+
+#Selected miRNA heat map (ones that were significant)
+
+palette <- colorRampPalette(c('blue','red'))(12)
+palette2 <- c('green','yellow','red','blue')
+
+palette
+
+sigmiR=c(NRvsR.Untx,NR.TxvsUntx,R.TxvsUntx,NRvsR.Tx)
+sigmiRdat=miRdat_sub_merge_norm[rownames(miRdat_sub_merge_norm) %in% sigmiR,]
+sigmiRdat=miRdat_sub_merge_norm[rownames(miRdat_sub_merge_norm) %in% R.TxvsUntx,]
+
+colnames(miRdat_sub_merge_norm)=Treatment.Fail 
+colnames(sigmiRdat)=Treatment.Fail
+
+miRdat_sub_merge_norm=sigmiRdat   # Trade for the new one
+color=as.numeric(as.factor(colnames(miRdat_sub_merge_norm)))
+f.patient=as.factor(colnames(miRdat_sub_merge_norm))
+
+hc.rows <- hclust(dist(miRdat_sub_merge_norm))
+
+heatmap(as.matrix(miRdat_sub_merge_norm), 
+        ColSideColors = palette2[color],
+        col=palette, labCol= NA, 
+        Rowv=as.dendrogram(hc.rows),
+        #labRow=NA,
+        #Colv = NA)
+        Colv=as.dendrogram(hclust(dist(t(miRdat_sub_merge_norm)),
+                                  method="average")))
+legend("topright",legend=levels(f.patient), fill=palette2,title="Group",
+       cex=0.7)
+
+miR_mRNA=read.table("all_miRNA_filt.txt",header=TRUE,sep="\t",fill=TRUE)
+head(miR_mRNA)
+miRNA_count = group_by(miR_mRNA, miRNA)
+miRNA_count_stat = summarise(miRNA_count, count = n())
+
+NR.TxvsUntx_miR=miR_mRNA[miR_mRNA$miR %in% NR.TxvsUntx,]
+R.TxvsUntx_miR=miR_mRNA[miR_mRNA$miR %in% R.TxvsUntx,]
+
+
+R.TxvsUntx_mRNA=finalres[(finalres$TreatedvsUntreatedForSuccess_pval<0.05 &
+                finalres$TreatedvsUntreatedForSuccess_FC<0),c(25,29,36)]
+
+R.TxvsUntx_miR_mRNA=inner_join(x = R.TxvsUntx_mRNA, y = NR.TxvsUntx_miR, by=c("Gene" = "mRNA"))
+
+test=R.TxvsUntx_miR_mRNA %>% group_by(miRNA) %>% mutate(count = n())
+
+by_miRNA <- group_by(R.TxvsUntx_miR_mRNA, miRNA)
+miRNA_count_R.TxvsUntx <- summarise(by_miRNA, mean(TreatedvsUntreatedForSuccess_FC),count = n())
+         
+x=data.frame(miRNA_count_stat)[data.frame(miRNA_count_stat)$miRNA %in% 
+              data.frame(miRNA_count_R.TxvsUntx)$miRNA==TRUE,]
+y=data.frame(miRNA_count_R.TxvsUntx)
+
+######NanoString mRNA Data #######################
+
+
+NanomRNA=read.csv("mRNA_normdata.txt",sep="\t",header = TRUE)
+mRNA_Pheno=read.csv("mRNA_Pheno.txt",sep="\t",header=TRUE)
+
+
+
+#Heat map of failed vs. success untreated from the 46 selected genes (from nano string mRNA chip data)
+
+negs_mRNA=NanomRNA[NanomRNA$Class.Name=="Negative",4:24]
+negMean=colMeans(negs_mRNA)
+meannegMean=mean(negMean)
+meannegMean=meannegMean+2*sd(negMean)
+
+tNanomRNA = t(NanomRNA)
+
+dim(tNanomRNA)
+dimnames(tNanomRNA)[[2]]<-tNanomRNA[1,]
+
+myval= tNanomRNA[3,] == "Endogenous"
+tNanomRNA_sub=tNanomRNA[,myval==TRUE]
+tNanomRNA_sub=as.data.frame(tNanomRNA_sub[4:24,])
+tNanomRNA_sub$name=rownames(tNanomRNA_sub)
+mRNA_Pheno$Sample=paste("X",mRNA_Pheno$Sample,sep="")
+
+tNanomRNA_sub_merge=merge(mRNA_Pheno,tNanomRNA_sub,
+                        by.x="Sample",by.y="name")
+
+tNanomRNA_sub_merge$SampleID=paste(tNanomRNA_sub_merge$Patient_ID,
+        tNanomRNA_sub_merge$Response,tNanomRNA_sub_merge$Treatment,sep=".")
+head(tNanomRNA_sub_merge)
+dim(tNanomRNA_sub_merge)
+tNanomRNA_sub_merge.mat=t(tNanomRNA_sub_merge[,6:52])
+class(tNanomRNA_sub_merge.mat) <- "numeric"
+tail(tNanomRNA_sub_merge.mat)
+
+#Draw density plot
+
+NanomRNA_sub_merge=tNanomRNA_sub_merge.mat
+dimnames(NanomRNA_sub_merge)[[2]] <- tNanomRNA_sub_merge[,53]
+class(NanomRNA_sub_merge) <- "numeric"
+NanomRNA_sub_merge=log(NanomRNA_sub_merge,2)
+
+NanomRNA_sub_merge_norm=normalizeQuantiles(NanomRNA_sub_merge)
+
+#miRdat_sub_merge_norm=normalizeMedianValues(miRdat_sub_merge)
+
+df.m <- melt.data.frame(as.data.frame(NanomRNA_sub_merge))
+
+ggplot(df.m) + 
+  geom_density(aes(x = value, colour = variable)) + labs(x = NULL) +
+  theme(legend.position='right') + scale_x_log10() + ggtitle("Raw Counts")
+
+par(mar=c(10,7,1,1))
+boxplot(log(value)~variable,las=2,data=df.m,main="Raw Signal", 
+        ylab="Counts",col=c(2,2,2,3,3,3))
+
+Treatment=as.factor(tNanomRNA_sub_merge$Treatment)
+#Cirrhosis.Group.Gt1b=as.factor(Gt1b$Cirrhosis.Group)
+#table(Treatment.Time.Gt1b,Cirrhosis.Group.Gt1b)
+Patient <- factor(tNanomRNA_sub_merge$Patient_ID) 
+Failure <- factor(tNanomRNA_sub_merge$Response)
+
+table(Patient,Treatment)
+Treatment
+Patient Treated Untreated
+110        1         1
+513        1         1
+814        1         0
+975        1         1
+1059       1         1
+1154       1         1
+1230       1         1
+1505       1         1
+2168       1         1
+2783       1         1
+2957       1         1
+#design <- model.matrix(~Patient+Treatment) 
+
+tedf= t(NanomRNA_sub_merge)
+pca=prcomp(tedf,scale.=T)
+tedf1 = data.frame(tedf)
+Phenotype=Patient
+#Phenotype=Treatment.Fail
+plot(pca,type="lines")  #Decide how many PC's are relevant for plotting
+pca$x[,1:3] 
+
+cell_rep=paste(Patient,Failure,Treatment,sep=".")
+Phenotype=Patient
+tedf1$group = as.factor(Phenotype)
+plot3d(pca$x[,1:3],col = as.integer(tedf1$group),type="s",size=2)
+group.v<-as.vector(cell_rep)
+text3d(pca$x[,1:3], pca$y, pca$z, group.v, cex=1.0, adj = 1) 
+
+
+#Heatmap of treated and untreated Subjects
+palette <- colorRampPalette(c('blue','red'))(12)
+palette2 <- c('green','yellow','red','blue')
+
+palette
+TreatFail=paste(tNanomRNA_sub_merge$Response,tNanomRNA_sub_merge$Treatment,sep=".")
+color=as.numeric(as.factor(TreatFail))
+f.patient=as.factor(TreatFail)
+
+hc.rows <- hclust(dist(NanomRNA_sub_merge))
+
+heatmap(as.matrix(NanomRNA_sub_merge), 
+        ColSideColors = palette2[color],
+        col=palette, labCol= NA, labRow=NA,
+        Rowv=as.dendrogram(hc.rows),
+        #Colv = NA)
+        Colv=as.dendrogram(hclust(dist(t(NanomRNA_sub_merge)),
+                                  method="average")))
+
+legend("topright",legend=levels(f.patient), fill=palette2,title="Group",
+       cex=0.7)
+
+#Heatmap of untreated Subjects only
+palette <- colorRampPalette(c('blue','red'))(12)
+palette2 <- c('orange','mediumblue','red','green')
+
+palette
+
+tNanomRNA_sub_merge_Untx=filter(tNanomRNA_sub_merge,
+                        tNanomRNA_sub_merge$Treatment=="Untreated")
+NanomRNA_sub_merge_Untx=t(tNanomRNA_sub_merge_Untx[,6:52])
+class(NanomRNA_sub_merge_Untx) <- "numeric"
+
+TreatFail=paste(tNanomRNA_sub_merge_Untx$Response,tNanomRNA_sub_merge_Untx$Treatment,sep=".")
+TreatFail
+color=as.numeric(as.factor(TreatFail))
+f.patient=as.character(TreatFail)
+f.patient[f.patient=="R.Untreated"]="Responder Baseline"
+f.patient[f.patient=="NR.Untreated"]="Failure Baseline"
+f.patient = as.factor(f.patient)
+
+
+hc.rows <- hclust(dist(NanomRNA_sub_merge_Untx))
+
+heatmap(as.matrix(NanomRNA_sub_merge_Untx), 
+        ColSideColors = palette2[color],
+        col=palette, labCol= NA, 
+        Rowv=as.dendrogram(hc.rows),
+        #Colv = NA)
+        Colv=as.dendrogram(hclust(dist(t(NanomRNA_sub_merge_Untx)),
+                                  method="average")))
+
+legend("right",legend=levels(f.patient), fill=palette2,title="Group",
+       cex=0.8)
+
+####Confirmation dotplots###############
+#mRNA confirmation plots of baseline, wk2 and wk 4 for failed and success (one slide with 6 genes (CXCL10, CXCL11, RSAD2, ISG15, DDX60, IRF9)
+options(digits=9)
+ISG_6=c("CXCL10","CXCL11","RSAD2","ISG15","DDX60","IRF9")
+Treatment=as.factor(mRNA_Pheno$Treatment.Time[2:22])
+Failed=as.factor(mRNA_Pheno$Response)
+#ISG_annotsub=subset(annot,annot$SYMBOL %in% ISG == TRUE)
+#ISG_sub=Gt1b[,match(ISG_annotsub$PROBEID,colnames(Gt1b))]
+tNanomRNA_sub_merge
+NanomRNA6=as.data.frame(tNanomRNA_sub_merge[,colnames(tNanomRNA_sub_merge) %in% ISG_6])
+
+cols = c(1:6);    
+NanomRNA6[,cols] = apply(NanomRNA6[,cols], 2, function(x) as.numeric(as.character(x)))
+
+NanomRNA6=cbind(tNanomRNA_sub_merge[,1:6],NanomRNA6)
+NanomRNA6
+#NanomRNA6=NanomRNA6[NanomRNA6$Treatment=="Untreated",]  # Only Untreated
+
+NanomRNA6$Response2[NanomRNA6$Response=="R"]="Responder"
+NanomRNA6$Response2[NanomRNA6$Response=="NR"]="Failure"
+NanomRNA6$Treatment2[NanomRNA6$Treatment=="Untreated"]="Baseline"
+NanomRNA6$Treatment2[NanomRNA6$Treatment=="Treated"]="On-Tx"
+length = dim(NanomRNA6)[2]-8
+for(i in 1:length){
+  j=i+6
+  filename=paste(names(NanomRNA6)[j],"nano3",sep="_")
+  #png(paste(filename,"png",sep="."))
+  ymin=floor(min(NanomRNA6[,j]))
+  ymax=ceiling(max(NanomRNA6[,j]))
+  size=(ymax-ymin)*0.05
+  plots=ggplot(NanomRNA6, aes(x=Treatment2, y=NanomRNA6[,j])) + 
+    geom_dotplot(aes(fill=factor(Response2)),
+          binaxis='y', stackdir='center', binwidth = size) +
+    scale_fill_manual(values=c("orange", "blue")) +
+    xlab("") + ylab(names(NanomRNA6)[j]) + ylim(c(ymin,ymax)) + 
+    theme(text = element_text(size=26)) +
+    theme_bw() + theme(legend.text = element_text(size = 16)) +
+    theme(legend.title=element_blank()) +
+    theme(axis.text.x  = element_text(size=16)) +
+    theme(axis.title.y  = element_text(size=16))
+  plots
+  ggsave(plots,filename=paste(filename,"png",sep="."))
+  dev.off()
+}
+
+NanomRNA6[,7:12]=apply(NanomRNA6[,7:12], 2, scale) 
+df.m=melt(NanomRNA6[,7:13], id="Response2")
+plots=ggplot(df.m, aes(x=variable, y=value)) + 
+  geom_dotplot(aes(fill=factor(Response2)),
+    binaxis='y', stackdir='center') +
+  scale_fill_manual(values=c("orange", "blue")) + theme_bw() +
+  theme(text = element_text(size=20)) +
+  theme(legend.text = element_text(size = 20)) +
+  theme(legend.title=element_blank()) +
+  theme(axis.title.x = element_blank()) +
+  theme(axis.title.y = element_blank()) + 
+  theme(axis.text.x  = element_text(size=16))
+plots
+
+length(Treatment)
+
+dim(miRdat_sub_merge_norm)
+#tmiRdat_sub_merge.mat=t(as.matrix(tmiRdat_sub_merge[, 6:803]))
+#dim(tmiRdat_sub_merge.mat)
+[1] 332  18
+[1] 404  18  # Second try - used a less stringent negative control threshold
+
+class(tmiRdat_sub_merge.mat) <- "numeric"
+Failure=as.factor(tmiRdat_sub_merge$Response)
+table(Treatment,Failure)
+Failure
+Treatment   NR R
+Treated    3 6
+Untreated  3 6
+
+Treatment.Fail=as.factor(paste(Failure,Treatment,sep="."))
+
+Treatment.Fail
+[1] R.Untreated  R.Treated    R.Untreated  R.Treated    R.Untreated  R.Treated    R.Untreated 
+[8] R.Treated    NR.Treated   NR.Untreated R.Treated    R.Untreated  NR.Treated   NR.Untreated
+[15] R.Untreated  R.Treated    NR.Untreated NR.Treated  
+Levels: NR.Treated NR.Untreated R.Treated R.Untreated
+
+design <- model.matrix(~0+Treatment.Fail) 
+colnames(design)=levels(Treatment.Fail)
+corfit <- duplicateCorrelation(miRdat_sub_merge_norm,design,
+                               block=tmiRdat_sub_merge$Patient_ID)
+corfit$consensus
+fit <- lmFit(miRdat_sub_merge_norm,design
+             block=tmiRdat_sub_merge$Patient_ID,
+             correlation=corfit$consensus)
+
+
+cm <- makeContrasts(NRvsR.Untreated = NR.Untreated-R.Untreated,
+                    NRvsR.Treated = NR.Treated-R.Treated,
+                    NR.TreatedvsUntreated = NR.Treated-NR.Untreated,
+                    R.TreatedvsUntreated = R.Treated-R.Untreated,
+                    levels=design) 
+fit2 <- contrasts.fit(fit, cm)
+fit2 <- eBayes(fit2)
+topTable(fit2, coef="R.TreatedvsUntreated")
+volcanoplot(fit2,coef="R.TreatedvsUntreated")
+finalresmir=topTable(fit2,sort="none",n=Inf)
+
+FC = 2^(fit2$coefficients)
+FC = ifelse(FC<1,-1/FC,FC)
+colnames(FC)=paste(colnames(FC),"FC",sep="_")
+pvalall=fit2$p.value
+colnames(pvalall)=paste(colnames(pvalall),"pval",sep="_")
+
+finalresmir=cbind(FC,pvalall,finalresmir)
+write.table(finalresmir,file="finalres_mir_FC.txt",col.names = TRUE,
+            row.names = TRUE, sep = "\t")
+
+
+NR.TxvsUntx=rownames(finalresmir[finalresmir$NR.TreatedvsUntreated_pval<0.05 & finalresmir$NR.TreatedvsUntreated_FC>0,])
+R.TxvsUntx=rownames(finalresmir[finalresmir$R.TreatedvsUntreated_pval<0.05 & finalresmir$R.TreatedvsUntreated_FC>0,])
+NRvsR.Tx=rownames(finalresmir[finalresmir$R.TreatedvsUntreated_pval<0.05 & finalresmir$NR.TreatedvsUntreated_FC>0,])
+NRvsR.Untx=rownames(finalresmir[finalresmir$NRvsR.Untreated_pval<0.05 & finalresmir$NRvsR.Untreated_FC>0,])
+
+
+
+
+
+miR_mRNA=read.table("all_miRNA_filt.txt",header=TRUE,sep="\t",fill=TRUE)
+head(miR_mRNA)
+miRNA_count = group_by(miR_mRNA, miRNA)
+miRNA_count_stat = summarise(miRNA_count, count = n())
+
+NR.TxvsUntx_miR=miR_mRNA[miR_mRNA$miR %in% NR.TxvsUntx,]
+R.TxvsUntx_miR=miR_mRNA[miR_mRNA$miR %in% R.TxvsUntx,]
+
+
+R.TxvsUntx_mRNA=finalres[(finalres$TreatedvsUntreatedForSuccess_pval<0.05 &
+                            finalres$TreatedvsUntreatedForSuccess_FC<0),c(25,29,36)]
+
+R.TxvsUntx_miR_mRNA=inner_join(x = R.TxvsUntx_mRNA, y = NR.TxvsUntx_miR, by=c("Gene" = "mRNA"))
+
+test=R.TxvsUntx_miR_mRNA %>% group_by(miRNA) %>% mutate(count = n())
+
+by_miRNA <- group_by(R.TxvsUntx_miR_mRNA, miRNA)
+miRNA_count_R.TxvsUntx <- summarise(by_miRNA, mean(TreatedvsUntreatedForSuccess_FC),count = n())
+
+x=data.frame(miRNA_count_stat)[data.frame(miRNA_count_stat)$miRNA %in% 
+                                 data.frame(miRNA_count_R.TxvsUntx)$miRNA==TRUE,]
+y=data.frame(miRNA_count_R.TxvsUntx)

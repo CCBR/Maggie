@@ -1,0 +1,312 @@
+
+---
+title: "RNA-seq analysis of TCF1 deleted T cell precursors"
+output:
+  html_document:
+    pandoc_args: [
+      "+RTS", "-K128m",
+      "-RTS"
+    ]
+---
+## *CCBR-546*
+### *Maggie Cam*
+### *Nov 16, 2015*
+
+## **Background**
+TCF1 is a transcription factor important for the earliest steps of T cell development. To address roles of TCF1 at later stages of T cell development.
+
+We wish to understand how removal of TCF1 alters the transcriptome in these cells. 
+
+## **Data Processing**
+
+```{r setup, echo=FALSE, warning=FALSE}
+
+source("http://bioconductor.org/biocLite.R")
+#biocLite("edgeR")
+library(Rsubread)
+library(limma)
+library(edgeR)
+library(ggplot2)
+library(rgl)
+library(knitr)
+
+
+knit_hooks$set(rgl = function(before, options, envir) {
+  if (!before) {
+    ## after a chunk has been evaluated
+    if (rgl.cur() == 0) return()  # no active device
+    name = paste(options$fig.path, options$label, sep = '')
+    rgl.snapshot(paste(name, '.png', sep = ''), fmt = 'png')
+    return(paste('\\includegraphics{', name, '}\n', sep = ''))
+  }
+})
+
+knit_hooks$set(webgl = hook_webgl)
+```
+####*This part of the program was run on biowulf, and data transferred to a local directory*
+
+```{r, eval=FALSE}
+#Command line version
+module load subread
+x=$(ls *.bam)
+featureCounts -p -T 8 -s 2 -p -t exon -g gene_id -a /data/maggiec/RNASeq/Genomes/mm10/gencode.vM4.all.gtf -o counts_ss.txt $x
+
+#Used R version:
+gtf="/data/maggiec/RNASeq/Genomes/mm10/gencode.vM4.all.gtf"
+targets <- readTargets()
+
+fc <- featureCounts(files=targets$bam,isGTFAnnotationFile=TRUE,nthreads=32,
+      annot.ext=gtf,GTF.attrType="gene_name",strandSpecific=2,isPairedEnd=TRUE)
+x <- DGEList(counts=fc$counts, genes=fc$annotation)
+
+```
+####*Load data from local directory:*
+
+```{r,eval=TRUE, echo=FALSE}
+setwd("/Users/maggiec/GitHub/Maggie/")
+load("ccbr546.RData")
+
+ls()
+targets
+fc$stat
+
+n=c(1:17)
+n=c(20:23)
+n=c(1:23)
+n=c(1:3,5:10,12:17)
+#fc1=fc[1:12]
+fc1=mat=fc$counts[,n]  #Look at first group by itself
+tfc1=t(fc1)
+filter <- apply(fc1, 1, function(x) length(x[x>5])>=1)
+fc1filt <- fc1[filter,] 
+fc1filt2=fc1[rownames(fc1) %in% selectgenes$V1,]
+
+genes <- rownames(fc1filt)
+targets1=targets[n,]
+dim(fc1filt)
+```
+
+####*Mapping Rate:*
+
+```{r, fig.width=10, fig.height=5, warning=FALSE,echo=FALSE}
+#options(scipen=9)
+#map=as.numeric(targets$mapped)
+#names(map)=sapply(strsplit(targets$bam,split="\\."),function(x) x[1])
+#barplot(map, col=as.numeric(as.factor(targets$Phenotype)),las = 2,cex.axis = 0.7)
+```
+
+
+####*QC Check: Look at raw signal distribution and median expression levels*
+
+```{r fig.width=10, fig.height=5, echo=FALSE, warning=FALSE,message=FALSE}
+
+library(ggplot2)
+library(reshape)
+library(plotly)
+
+fc1filt=as.data.frame(fc1filt)
+fc1filtnames=sapply(strsplit(colnames(fc1filt),split="\\."),function(x) x[1])
+colnames(fc1filt)=paste(targets1$cell,targets1$batch)
+
+df.m <- melt(as.data.frame(fc1filt))
+ggplot(df.m) + 
+  geom_density(aes(x = value, colour = variable)) + labs(x = NULL) +
+  theme(legend.position='right') + scale_x_log10() + ggtitle("Raw Counts")
+
+par(mar=c(10,7,1,1))
+boxplot(log(value)~variable,las=2,data=df.m,main="Raw Signal", 
+  	ylab="Counts",col=as.numeric(as.factor(targets1$cell)))
+
+```
+
+####*Data is normalized by TMM: filtered number of genes*
+
+```{r,fig.width=10, fig.height=5, echo=FALSE, warning=FALSE, message=FALSE}
+
+x <- DGEList(counts=fc$counts[,n], genes=fc$annotation)
+isexpr <- rowSums(cpm(x)>0.5) >= 1
+isexpr[names(isexpr) %in% selectgenes] = TRUE
+isexprzero <- rowSums(cpm(x))>0
+hasannot <- rowSums(is.na(x$genes))==0
+x <- x[isexpr & hasannot & isexprzero,keep.lib.sizes=FALSE]
+
+#Number of filtered genes 
+dim(x)
+[1] 14128    17
+[1] 17900    17
+x=rpkm(x)
+x <- calcNormFactors(x)
+
+
+par(mfrow=c(2,4))
+for (i in 1:dim(x)[2]){
+plotMD(cpm(x, log=TRUE), column=i)
+abline(h=0, col="red", lty=2, lwd=2)
+}
+
+```
+
+####*Run Voom*
+```{r, echo=FALSE,warning=FALSE,message=FALSE}
+#Do analysis for entire group
+celltype <- factor(targets$cell[n])
+design <- model.matrix(~0+celltype)
+design
+dev.off()
+
+#v <- voom(x,design=NULL,normalize="cyclicloess",plot=FALSE)
+v <- voom(x,design=NULL,normalize="quantile",plot=TRUE)
+#v <- voom(x,design=NULL,normalize="none",plot=TRUE)
+```
+
+####*After Normalization*
+
+```{r, echo=FALSE,webgl=TRUE}
+
+colnames(v$E)=paste(fc1filtnames,targets$batch[n])
+df.m <- melt(as.data.frame(v$E))
+
+ggplot(df.m) + 
+  geom_density(aes(x = value, colour = variable)) + labs(x = NULL) +
+  theme(legend.position='right') + ggtitle("Normalized Counts")
+
+dev.off()
+
+par(mar=c(10,7,1,1))
+boxplot(value~variable,las=2,data=df.m,main="Normalized Signal", 
+  	ylab="Counts",col=as.numeric(as.factor(celltype)))
+
+dev.off()
+
+par(mfrow=c(2,4))
+for (i in 1:dim(v)[2]){
+plotMD(cpm(v, log=TRUE), column=i)
+abline(h=0, col="red", lty=2, lwd=2)
+}
+
+edf=as.matrix(v$E)
+tedf= t(edf)
+pca=prcomp(tedf,scale.=T)
+tedf1 = data.frame(tedf)
+Phenotype=targets$cell[n]
+cell_rep=paste(Phenotype,targets$batch[n],sep=".")
+tedf1$group = as.factor(Phenotype)
+
+plot(pca,type="lines")  #Decide how many PC's are relevant for plotting
+#pca$x[,1:3]  #look at first 3 PC's
+
+plot3d(pca$x[,1:3],col = as.integer(tedf1$group),type="s",size=2)
+group.v<-as.vector(cell_rep)
+text3d(pca$x[,1], pca$x[,2], pca$x[,3], group.v, cex=1.0, adj = 1.2) 
+
+text3d(pca$x, pca$y, pca$z, group.v, cex=1.0, adj = 1.2) 
+#rgl.postscript("pca3d_indiv.pdf","pdf")
+```
+
+```{r,echo=FALSE}
+
+
+palette <- colorRampPalette(c('blue','yellow'))(12)
+palette2 <- rainbow(20)
+
+palette
+color=as.numeric(as.factor(targets1$cell[n]))
+f.cell=as.factor(targets1$cell[n])
+topPC1=base::sort(abs(pca$rotation[,"PC1"]),decreasing=TRUE)[1:500]
+v1=v$E[rownames(v$E) %in% names(topPC1),]
+v1=sort(v1,)
+head(v1)
+dim(v1)
+#hc.rows <- hclust(dist(v$E))
+dev.off()
+
+diff=v$E[,14]-v$E[,15]
+
+topPC1=base::sort(diff,decreasing=TRUE)[1:100]
+topPC1[1:50]
+v1=v1[order(match(rownames(v1),names(topPC1))),]
+
+vselect=v$E[rownames(v$E) %in% selectgenes,]
+colnames(vselect)=cell_rep
+dd <- as.dist((1 - cor(t(vselect))/2))
+hc.rows <- hclust(dd)
+
+heatmap(as.matrix(vselect), 
+        ColSideColors = palette2[color],
+        col=palette, labCol = targets1$cell,
+        Rowv=as.dendrogram(hc.rows),
+        #labRow=NA,
+        #Colv = NA)
+        Colv=as.dendrogram(hclust(dist(t(vselect)),
+                                  method="average")))
+legend("topright",legend=levels(f.cell), fill=palette2,title="Group",
+       cex=0.5)
+
+d3heatmap(vselect, Rowv = TRUE, Colv = TRUE, scale = "none", dendrogram = "none", main = "title", color = "YlOrRd",cexRow=1,cexCol=0.5,main="topgenes")
+
+```
+
+####*Statistical Analysis of Experimental groups (lmFit)*
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+#Run analysis of Experimental group:
+
+options(digits=3) 
+write.table(v$E,file="RNASeq_Adult_embryonic_mTEC_results.txt",sep="\t")
+colnames(v$E)=cell_rep
+write.table(v$E,file="../results/RNASeq_TCF1_results2.txt",sep="\t")
+write.table(v$E,file="../results/RNASeq_TCF1_results_rpkm.txt",sep="\t")
+
+```
+
+####*Heatmap: Top genes*
+
+```{r, echo=FALSE, message=FALSE,warning=FALSE}
+library(d3heatmap)
+library(reshape2)
+
+#Original Heatmap (notice batch effect)
+topgenes_data=v$E[rownames(v$E) %in% rownames(topgenes),]
+colnames(topgenes_data)=colnames(v$E)
+topgenes_data=topgenes_data[match(rownames(topgenes),rownames(topgenes_data)),]
+#colnames(topgenes_data)=targets$Phenotype[match(colnames(topgenes_data),targets$bam)]
+#colnames(topgenes_data)=paste(colnames(topgenes_data),targets$Replicate,sep=".")
+cc=colsplit(string=colnames(topgenes_data), pattern="_", names=c("Part1", "Part2"))
+dd=colsplit(string=cc$Part2, pattern="\\.", names=c("Part1", "Part2"))
+colnames(topgenes_data)=dd$Part1
+d3heatmap(topgenes_data, scale = "row", dendrogram = "none", main = "title",
+    color = "YlOrRd",cexRow=1,main="topgenes")
+```
+
+```{r, echo=FALSE,eval=FALSE}
+
+datadir="/Users/maggiec/Github/Maggie/ccbr638/results"
+setwd(datadir)
+write.table(finalres,file="Pkp4_HBB_FCpval.txt",
+      row.names=TRUE,col.names=TRUE,sep="\t",quote=FALSE)
+
+```{r}
+#Look at genes##
+
+bed=read.table("mm10-TCRsIgs2.bed",header=FALSE)
+colnames(bed)=c("chr","start","stop","name")
+bed[bed$start %in% fc$annotation$Start,]
+
+Gene=fc$annotation[fc$annotation$Start %in% bed$start,]
+Genecount=fc$counts[rownames(fc$counts) %in% Gene,]
+merge(fc$annotation,bed,by.x=fc$annotation$Start,by.y=bed$start)
+
+selectgenes=read.table("select_genes.txt")
+selectgenes=c(as.character(selectgenes$V1),"Tcf7")
+Genecount=fc$counts[rownames(fc$counts) %in% selectgenes$V1,]
+
+
+```
+
+###*Provenance:*
+
+```{r, echo=FALSE}
+
+sessionInfo()
+
+```

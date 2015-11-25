@@ -1,0 +1,107 @@
+---
+title: "CCBR-485_ChipSeq"
+author: "Maggie Cam"
+date: "September 27, 2015"
+output: html_document
+---
+## **Background**
+Neuroblastoma (NB) is a rare childhood cancer affecting 10.2 cases per million children under 15 years of age in the United States. The median age at diagnosis is 17 months, being the most common cancer diagnosed in the first year of life.
+
+## **Data Processing**
+####*This part of the program was run on biowulf, and data transferred to a local directory*
+
+```{r, eval=FALSE,message=FALSE, warning=FALSE}
+
+library(csaw)
+library(edgeR)
+library(GenomicRanges)
+library(Rsubread)
+
+##Do Alignments using Rsubread to produce bam files in directory
+ref="/data/maggiec/RNASeq/Genomes/mm9/chr_all3.fa"
+buildindex(basename="reference_index",reference=ref)
+read1 = read.table("samples2.txt")
+align(index="reference_index",readfile1=read1)
+
+##Bring in bam files and get counts within +/- 2KB of promoter regions
+targets <- readTargets()
+bam.files=targets$Bam
+regions=read.delim("mouse_prom_2000_rev.txt",header=FALSE,sep="\t")
+prom_regions=GRanges(regions$V2,IRanges(regions$V3,regions$V4))
+reg.counts<-regionCounts(bam.files,param=readParam(pet="none"),prom_regions)
+
+```
+
+###*Do this in local directory:*
+
+```{r}
+library(csaw)
+library(edgeR)
+library(GenomicRanges)
+library(Rsubread)
+
+setwd("/Users/maggiec/GitHub/Maggie/ccbr485/")
+load("data/chip.RData")
+load("data/newChip.RData")
+ls()
+
+targets
+
+##Apply TMM but only to lower 90% of M-values
+
+ab <- aveLogCPM(asDGEList(reg.counts))
+keep <- ab <= quantile(ab, p=0.9)
+normalize(reg.counts[keep,])
+normfacs=normalize(reg.counts[keep,])
+adj.counts<-cpm(asDGEList(reg.counts),log=TRUE)
+
+```
+###Draw Raw MA plots to look for outliers
+
+```{r, echo=FALSE}
+
+par(mfrow=c(2,3),mar=c(5,4,2,1.5))
+
+j=1
+for(i in j:(length(bam.files)-1)){
+  cur.x <- adj.counts[,j] 
+  cur.y <- adj.counts[,1+i] 
+  smoothScatter(x=(cur.x+cur.y)/2+6*log2(10), y=cur.x-cur.y, 
+                xlab="A", ylab="M", main=paste(j, "vs", i+1)) 
+  all.dist <- diff(log2(normfacs[c(i+1, j)])) 
+  abline(h=all.dist, col="red") 
+}
+dev.off()
+
+```
+
+####*Remove outlier samples - 2,3,5,6 (for simplification, removed 1-7)*
+####*Apply loess normalization, plot corrected values*
+
+```{r, echo=FALSE}
+#Samples
+targets$Bam[8:16]
+k=1
+win.off<-normalize(reg.counts[,k:16],type="loess",iterations = 3) 
+head(win.off)
+
+cpmnorm <- log2(assay(reg.counts[,k:16])+0.5) - win.off/log(2)
+par(mfrow=c(2,3),mar=c(5,4,2,1.5))
+
+j=9
+num=8
+for(i in j:(length(targets[,1]))){
+  cur.x <- cpmnorm[,num] 
+  cur.y <- cpmnorm[,i] 
+  smoothScatter(x=(cur.x+cur.y)/2, y=cur.x-cur.y, 
+                xlab="A", ylab="M", main=paste(num, "vs", i)) 
+  all.dist <- 0
+  abline(h=all.dist, col="red") 
+}
+dev.off()
+
+```
+
+```{r}
+
+```
