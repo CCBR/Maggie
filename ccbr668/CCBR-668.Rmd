@@ -1,0 +1,219 @@
+---
+title: "CCBR-668"
+author: "Maggie Cam"
+date: "December 19, 2015"
+output: html_document
+---
+
+## *CCBR-668*
+### *Maggie Cam*
+### *Dec 16, 2015*
+
+## **Background**
+In Vitro Drug Screening in cells grown on different substrates 
+
+Goal: To find genes differentially expressed in cells grown on substrates of different hardness (glass, medium, low)
+
+## **Data Processing**
+
+```{r setup, echo=FALSE, warning=FALSE}
+
+#source("https://bioconductor.org/biocLite.R")
+#biocLite("arrayQualityMetrics")
+#biocLite("AnnotationForge")
+#biocLite("AnnotationDbi")
+#biocLite("human.db0")
+#install.packages('knitr', repos='http://www.rforge.net/', type='source')
+
+#Download annotations
+#download.file("http://www.affymetrix.com/Auth/analysis/downloads/na35/ivt/PrimeView.na35.annot.csv.zip", "PrimeView.na35.annot.csv.zip")
+#unzip("PrimeView.na35.annot.csv.zip")
+
+library(primeviewcdf)
+library(affy)
+library(limma)
+library(genefilter)
+library(AnnotationForge)
+library(AnnotationDbi)
+library(human.db0)
+
+#makeDBPackage("HUMANCHIP_DB", affy = TRUE, prefix="primeview",
+#              fileName="PrimeView.na35.annot.csv/PrimeView.na35.annot.csv", 
+#              baseMapType="gbNRef",outputDir=".",
+#              version = "12.1.0", manufacturer="Affymetrix",
+#              manufacturerUrl="http://www.affymetrix.com")
+#install.packages("primeview.db", repos=NULL, type = "source")
+
+library(primeview.db)
+library(knitr)
+library(rgl)
+
+knit_hooks$set(webgl = hook_webgl)
+knit_hooks$set(rgl = function(before, options, envir) {
+  if (!before) {
+    ## after a chunk has been evaluated
+    if (rgl.cur() == 0) return()  # no active device
+    name = paste(options$fig.path, options$label, sep = '')
+    rgl.snapshot(paste(name, '.png', sep = ''), fmt = 'png')
+    return(paste('\\includegraphics{', name, '}\n', sep = ''))
+  }
+})
+
+knit_hooks$set(webgl = hook_webgl)
+```
+arrayQualityMetrics:::intgroupColors
+function (x) 
+{
+    if (length(x$intgroup) > 0) {
+        colors = c(brewer.pal(9, "Set1"), brewer.pal(8, "Dark2"))
+        fac = as.factor(x$pData[[x$intgroup[1]]])
+        fac = maximumLevels(fac, n = length(colors))
+        colors = colors[seq_len(nlevels(fac))]
+        ac = colors[as.integer(fac)]
+        key = list(rect = list(col = colors), text = list(levels(fac)), 
+            rep = FALSE)
+    }
+    else {
+        key = NULL
+        ac = rep("#1F78B4", x$numArrays)
+    }
+    list(arrayColors = ac, key = key)
+}
+```
+
+####*Load data from local directory:*
+
+```{r,eval=TRUE, echo=FALSE}
+
+setwd("/Users/maggiec/GitHub/Maggie/ccbr668/data/")
+
+celFiles=read.table("covdesc",header=TRUE)[,1]
+pd<-read.AnnotatedDataFrame("covdesc",header=TRUE,sep="\t")
+x <- varMetadata(pd)
+x <- data.frame(x, channel = "_ALL_")
+varMetadata(pd) <- x
+
+affyData = ReadAffy()
+phenoData(affyData) = pd
+
+colnames(affyData)
+gns <- select(primeview.db, featureNames(affyData),
+              c("SYMBOL","GENENAME"))
+
+####*QC Check: Look at raw signal distribution and median expression levels*
+```
+
+```{r, echo=FALSE,webgl=TRUE}
+library(ggplot2)
+library(reshape)
+library(plotly)
+library(matrixStats)
+
+e=exprs(affyData)
+df.m <- melt(as.data.frame(e))
+ggplot(df.m) + 
+  geom_density(aes(x = value, colour = variable)) + labs(x = NULL) +
+  theme(legend.position='right') + scale_x_log10() + ggtitle("Raw Counts")
+
+par(mar=c(10,7,1,1))
+boxplot(log(value)~variable,las=2,data=df.m,main="Raw Signal", 
+  	ylab="Signal",col=as.numeric(as.factor(pData(affyData)$Sample)))
+
+#Plots for Normalized Data
+
+eset = rma(affyData)
+e <- exprs(eset)
+df.m <- melt(as.data.frame(e))
+ggplot(df.m) + 
+  geom_density(aes(x = value, colour = variable)) + labs(x = NULL) +
+  theme(legend.position='right') + scale_x_log10() + ggtitle("Raw Counts")
+
+par(mar=c(10,7,1,1))
+boxplot(log(value)~variable,las=2,data=df.m,main="Raw Signal", 
+  	ylab="Signal",col=as.numeric(as.factor(pData(eset)$Sample)))
+
+#Heatmap for normalized data
+colorRange = rgb(seq(0, 1, l=256),
+                   seq(0, 1, l=256),
+                   seq(1, 0, l=256))
+te=t(e) 
+hc=hclust(dist(te))
+plot(hc)
+
+
+reorderfun = function(d,w) { d }
+png("heatmap.png", res=150, height=22,width=17,units="in")
+
+e <- exprs(eset)
+te <- t(e)
+tedf = as.data.frame(te)
+tedf=cbind(pData(eset),tedf)
+
+colnum=dim(tedf)[2]
+tedf.mat=(as.matrix(tedf[, 4:colnum]))
+pca=prcomp(tedf.mat)
+Treat <- factor(tedf$Substrate) 
+
+library(rgl)
+open3d() 
+
+plot3d(pca$x[,1:3],col=as.numeric(as.factor(Treat)), 
+       type="s",size=2)
+group.v<-as.vector(paste(tedf$Substrate,tedf$Rep))
+text3d(pca$x, pca$y, pca$z, group.v, cex=0.6, adj = 1.5) 
+rgl.postscript("pca3d_Qindiv.pdf","pdf")
+
+```
+####Run Differential Expression analysis
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+design <- model.matrix(~0+Treat)
+
+fit <- lmFit(eset, design)
+cm <- makeContrasts(LowvsGlass = TreatLow-TreatGLASS,
+                    MedvsGlass = TreatMed-TreatGLASS,
+                    MedvsLow = TreatMed-TreatLow,
+                    levels=design) 
+fit2 <- contrasts.fit(fit, cm)
+fit2 <- eBayes(fit2)
+fit2$genes <- gns[!duplicated(gns[,1]),]
+fit2$genename <- gns[!duplicated(gns[,2]),]
+topTable(fit2, coef=3)
+topTable(fit2, coef=2)
+finalres=topTable(fit2,sort="none",n=Inf)
+
+FC = 2^fit2$coefficients
+FC = ifelse(FC<1,-1/FC,FC)
+colnames(FC)=paste(colnames(FC),"FC",sep="_")
+colnames(FC)
+pvalall=fit2$p.value
+colnames(pvalall)=paste(colnames(pvalall),"pval",sep="_")
+colnames(pvalall)
+topgenes=topTable(fit2, coef="LowvsGlass",n=50,sort.by="p")
+
+LowvsGlass=p.adjust(fit2$p.value[,1], method='BH')
+MedvsGlass=p.adjust(fit2$p.value[,2], method='BH')
+MedvsLow=p.adjust(fit2$p.value[,3], method='BH')
+pvaladjall=cbind(LowvsGlass,MedvsGlass,MedvsLow)
+colnames(pvaladjall)=paste(colnames(pvaladjall),"adjpval",sep="_")
+
+finalres = as.data.frame(cbind(finalres[,1:3],e,FC,pvalall,pvaladjall))
+head(finalres)
+
+
+#write.table(finalres,file="All_Results_Substrates.txt",          row.names=FALSE,sep="\t",quote=FALSE)
+```
+
+```{r, echo=FALSE, message=FALSE,warning=FALSE}
+
+library(d3heatmap)
+library(reshape2)
+
+#Original Heatmap (notice batch effect)
+topgenes_data=eset[rownames(eset) %in% rownames(topgenes),]
+colnames(topgenes_data)=colnames(eset)
+topgenes_data=topgenes_data[match(rownames(topgenes),rownames(topgenes_data)),]
+rownames(topgenes_data) = topgenes$SYMBOL
+d3heatmap(topgenes_data, scale = "row", dendrogram = "none", main = "title",
+    color = "YlOrRd",cexRow=1,main="topgenes")
+```
