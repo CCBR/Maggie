@@ -86,26 +86,27 @@ function (x)
 ```{r,eval=TRUE, echo=FALSE}
 
 setwd("/Users/maggiec/GitHub/Maggie/ccbr668/data/")
-
-celFiles=read.table("covdesc",header=TRUE)[,1]
-pd<-read.AnnotatedDataFrame("covdesc",header=TRUE,sep="\t")
-x <- varMetadata(pd)
-x <- data.frame(x, channel = "_ALL_")
-varMetadata(pd) <- x
+load(".RData")
+#celFiles=read.table("covdesc",header=TRUE)[,1]
+#pd<-read.AnnotatedDataFrame("covdesc",header=TRUE,sep="\t")
+#x <- varMetadata(pd)
+#x <- data.frame(x, channel = "_ALL_")
+#varMetadata(pd) <- x
 
 affyData = ReadAffy()
 phenoData(affyData) = pd
 
 colnames(affyData)
-gns <- select(primeview.db, featureNames(affyData),
+gns <- AnnotationDbi::select(primeview.db, featureNames(affyData),
               c("SYMBOL","GENENAME"))
+gns <- gns[!duplicated(gns$PROBEID),]
 
 ####*QC Check: Look at raw signal distribution and median expression levels*
 ```
 
 ```{r, echo=FALSE,webgl=TRUE}
 library(ggplot2)
-library(reshape)
+library(reshape2)
 library(plotly)
 library(matrixStats)
 
@@ -140,17 +141,18 @@ te=t(e)
 hc=hclust(dist(te))
 plot(hc)
 
-
 reorderfun = function(d,w) { d }
 png("heatmap.png", res=150, height=22,width=17,units="in")
 
 e <- exprs(eset)
 te <- t(e)
 tedf = as.data.frame(te)
+#pData(eset)$Substrate=sapply(strsplit(rownames(pData(eset)),"_"),"[[",1)
+pData(eset)$Substrate=sapply(strsplit(rownames(pData(eset)),"_"),function(x) x[[1]])
 tedf=cbind(pData(eset),tedf)
-
+tedf[1:10,1:10]
 colnum=dim(tedf)[2]
-tedf.mat=(as.matrix(tedf[, 4:colnum]))
+tedf.mat=(as.matrix(tedf[, 3:colnum]))
 pca=prcomp(tedf.mat)
 Treat <- factor(tedf$Substrate) 
 
@@ -210,10 +212,107 @@ library(d3heatmap)
 library(reshape2)
 
 #Original Heatmap (notice batch effect)
-topgenes_data=eset[rownames(eset) %in% rownames(topgenes),]
+topgenes_data=e[rownames(e) %in% rownames(topgenes),]
 colnames(topgenes_data)=colnames(eset)
 topgenes_data=topgenes_data[match(rownames(topgenes),rownames(topgenes_data)),]
-rownames(topgenes_data) = topgenes$SYMBOL
-d3heatmap(topgenes_data, scale = "row", dendrogram = "none", main = "title",
+topgenes_data=as.data.frame(topgenes_data)
+topgenes_data$SYMBOL=topgenes$SYMBOL
+topgenes_data$mean = rowMeans(topgenes_data[,1:12])
+
+#top_diff <- group_by(topgenes_data, SYMBOL)
+tg_group=topgenes_data %>% group_by(SYMBOL) %>% top_n(n=1)
+tg=as.data.frame(tg_group[,c(5:12,1:4)])
+rownames(tg)=tg_group$SYMBOL
+
+d3heatmap(tg, scale = "row", dendrogram = "none", main = "title",
     color = "YlOrRd",cexRow=1,main="topgenes")
 ```
+
+####Linear model 
+
+```{r, echo=FALSE, message=FALSE,warning=FALSE}
+Treatnum=as.numeric(c(rep("1",4),rep("0",4),rep("0.5",4)))
+em=e
+colnames(em)=Treatnum
+resultlist <- apply(em, 1, function(y) lm(y ~ Treatnum)) 
+resultcoeffs <- apply(em, 1, function(y) lm(y ~ Treatnum)$coefficients) 
+names(resultlist[[1]])
+
+summary(resultlist[[2]])[4][[1]][8]
+
+lmcoeff=lapply(resultlist,function(y) summary(y)[8])
+lmcoeff.df=as.data.frame(unlist(lmcoeff))
+lmpval=lapply(resultlist,function(y) summary(y)[4][[1]][8])
+lmpval.df=as.data.frame(unlist(lmpval))
+lmslope=lapply(resultlist,function(y) summary(y)[4][[1]][2])
+lmslope.df=as.data.frame(unlist(lmslope))
+lm.df=cbind(lmslope.df,lmcoeff.df,lmpval.df)
+colnames(lm.df)=c("slope","coeff","pval")
+coeff=lm.df$coeff
+pval=lm.df$pval
+head(lm.df[order(pval),])
+topgenes=lm.df[order(pval),]
+
+###plot 
+
+edt=melt(em)
+head(edt)
+colnames(edt)=c("probe","hardness","exp")
+
+#fit <- lm(exp ~ hardness + probe, data=edt)
+#lapply(datlist, function(d) lm(exp ~ hardness + probe, data=edt))
+install.packages("devtools")
+library(devtools)
+install_github("easyGgplot2", "kassambara")
+
+topgenes.up.df=subset(topgenes, slope > 0.4 & pval<0.0001)
+topgenes.down.df=subset(topgenes, slope< -0.4 & pval<0.0001)
+
+options(digits = 4)
+print(1e5)
+setwd("../results")
+layout( matrix(c(1,1, 2, 3, 3, 4), nrow=3, ncol=2) )
+
+fignum=dim(topgenes.up.df)[1]/16
+fignum=dim(topgenes.down.df)[1]/16
+
+j=1
+for (i in 0:fignum){
+png(filename=paste(i,"png",sep="."),width = 1200, height = 1200)
+par(mfrow=c(4,4))
+par(mar = rep(2, 4))
+j=i*16+1
+l=j+15
+for (k in j:l){
+probename=rownames(topgenes.down.df[k,])
+#probename="11756310_a_at"
+genename=gns[match(probename,gns$PROBEID),]
+genename=genename[2:3]
+#png(filename=paste(probename,"png",sep="."))
+Probe=edt[edt$probe==probename,]
+z<-lm(exp ~ hardness,data=Probe)
+plot(Probe$hardness,Probe$exp,main=genename, cex.main=1.0, col = "dark red")
+#points(Probe$hardness,Probe$exp, cex = 1.0, col = "dark red")
+lines(Probe$hardness,fitted(z))
+txt=paste("r2=",sprintf("%.4f",topgenes.down.df[k,2]),", p=",
+            sprintf("%0.4g",topgenes.down.df[k,3]),sep=" ")
+text(0.8,max(Probe$exp),txt)
+}
+dev.off()
+}
+
+
+topgenes.df=topgenes[,c(1,3)]
+write.table(topgenes.df,file="substrate_results.txt",col.names=TRUE,
+           row.names=TRUE,sep="\t",quote=FALSE)
+
+```
+#ggplot2.stripchart(data=Probe, xName='hardness',yName='exp', groupName='hardness',
+#               groupColors=c('red','green','blue'), showLegend=FALSE,
+#               backgroundColor="white", xtitle="hardness", ytitle="expression", 
+#               mainTitle="Plot of expression \n by hardness",
+#               addBoxplot=TRUE, notch=FALSE,
+#               removePanelGrid=TRUE,removePanelBorder=TRUE,
+#               axisLine=c(0.5, "solid", "black"))
+#stripchart(Probe$exp ~ Probe$hardness, vertical = TRUE, method = "jitter", pch = 16, #col = "red")
+#stripchart(fitted(z) ~ Probe$hardness, vertical = TRUE, add = TRUE, pch="------", #method = "jitter", text(x, 1.1, labels=x))
